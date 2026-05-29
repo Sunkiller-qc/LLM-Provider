@@ -119,7 +119,7 @@ function loadOrCreateConfig() {
   // Pas de config existant : on part d'un objet vide (PAS du example
   // qui contient des modeles bidons C:\models\qwen3...)
   return {
-    platformUrl: 'http://localhost:3001',
+    platformUrl: 'https://backend.chia-offer.com',
     localLlamaPort: 8080,
     models: [],
     payoutPreference: 'XCH',
@@ -386,16 +386,15 @@ async function main() {
   // === 4. JWT - flow simplifie ===
   title('4. Authentification (signe une fois dans Sage)');
 
-  const platformUrl = config.platformUrl || (await ask(`\n  URL du backend [http://localhost:3001] : `)) || 'http://localhost:3001';
+  const platformUrl = config.platformUrl || (await ask(`\n  URL du backend [https://backend.chia-offer.com] : `)) || 'https://backend.chia-offer.com';
   config.platformUrl = platformUrl;
 
   console.log('');
   console.log(`  ${c.bold}Methode rapide (recommandee) :${c.reset}`);
-  console.log(`  1. Va sur ${c.cyan}${platformUrl.replace(':3001', ':3000')}${c.reset} dans ton navigateur`);
+  console.log(`  1. Va sur ${c.cyan}https://llm.chia-offer.com/provider/setup${c.reset} dans ton navigateur`);
   console.log(`  2. Clique ${c.bold}"Connecter Sage"${c.reset} et signe`);
-  console.log(`  3. Une fois connecte, ouvre la console (F12) et tape :`);
-  console.log(`     ${c.dim}localStorage.getItem('gpu-rental-jwt')${c.reset}`);
-  console.log(`  4. Copie le token (sans les guillemets) et colle-le ci-dessous`);
+  console.log(`  3. Une fois connecte, copie le JWT affiche`);
+  console.log(`  4. Colle-le ci-dessous`);
   console.log('');
 
   let authToken = '';
@@ -473,7 +472,7 @@ async function main() {
               model: m.name,
               messages: [{ role: 'user', content: BENCH_PROMPT }],
               max_tokens: 200,
-              temperature: 0.3,  // un peu de variation pour eviter les patterns trop courts
+              temperature: 0.3,
               stream: false,
             },
             { timeout: 120_000 },
@@ -546,10 +545,10 @@ async function main() {
     config.gpuId = registration.gpu.id;
     saveConfig(config);
     ok(`Enregistre ! GPU ID = ${c.cyan}${registration.gpu.id}${c.reset}`);
-    info(`Status : ${c.yellow}hors-ligne${c.reset} (deviendra "en ligne" quand tu lanceras start.bat)`);
+    info(`Status : ${c.yellow}hors-ligne${c.reset} (deviendra "en ligne" quand tu lanceras npm start)`);
   } catch (err) {
     warn(`Register a echoue : ${err.response?.data?.error || err.message}`);
-    warn('Tu peux relancer install.bat plus tard, ou ca se fera au 1er start.bat.');
+    warn('Tu peux relancer npm run setup-auto plus tard, ou ca se fera au 1er npm start.');
   }
 
   // === Recap ===
@@ -579,12 +578,12 @@ async function main() {
     console.log(`  Status actuel      : ${c.yellow}hors-ligne${c.reset}`);
   }
   console.log('');
-  step(`Pour activer ton GPU sur le site : double-clic sur ${c.cyan}start.bat${c.reset}`);
-  step(`Pour le mettre hors-ligne : Ctrl+C dans la fenetre start.bat`);
+  step(`Pour activer ton GPU sur le site : ${c.cyan}npm start${c.reset}`);
+  step(`Pour le mettre hors-ligne : Ctrl+C`);
   console.log('');
   step(`Pour modifier ta config plus tard :`);
-  console.log(`  · Rapide : edite ${c.cyan}config.json${c.reset} (notepad)`);
-  console.log(`  · Visuel : va sur ${c.cyan}${platformUrl.replace(':3001', ':3000')}/dashboard${c.reset} et clique "Modifier" sur ton GPU`);
+  console.log(`  · Rapide : edite ${c.cyan}config.json${c.reset} (notepad ou nano)`);
+  console.log(`  · Visuel : va sur ${c.cyan}https://llm.chia-offer.com/dashboard${c.reset} et clique "Modifier"`);
   console.log(`  · Refaire ce wizard : ${c.cyan}npm run setup-auto${c.reset}`);
   console.log('');
 

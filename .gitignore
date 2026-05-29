@@ -1,0 +1,12 @@
+# Config locale — contient le JWT, NE PAS committer
+config.json
+
+# Fichiers modeles GGUF (gros binaires)
+models/
+*.gguf
+
+# Node
+node_modules/
+
+# Docker Compose override local
+docker-compose.override.yml

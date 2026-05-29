@@ -238,8 +238,8 @@ async function stepModelsManual(existingModels) {
 async function stepAuth(config) {
   log.title('5. Authentification wallet Chia');
 
-  const platformUrl = (await prompt(`Backend URL [${config.platformUrl || 'http://localhost:3001'}] : `))
-    || config.platformUrl || 'http://localhost:3001';
+  const platformUrl = (await prompt(`Backend URL [${config.platformUrl || 'https://backend.chia-offer.com'}] : `))
+    || config.platformUrl || 'https://backend.chia-offer.com';
   config.platformUrl = platformUrl;
 
   if (config.authToken) {
@@ -388,9 +388,9 @@ async function stepRegister(config, models, gpu) {
         gpuModel: gpu.model,
         vramGb: gpu.vramGb,
         availableModels: cleanModels,
-        ratePerHourUsd: cleanModels[0]?.rateUsdPerHour || 0.40,  // tarif de reference (le 1er)
+        ratePerHourUsd: cleanModels[0]?.rateUsdPerHour || 0.40,
         payoutPreference: config.payoutPreference || 'XCH',
-        tunnelUrl: null,  // sera mis a jour au 1er launch
+        tunnelUrl: null,
       },
       { headers: { Authorization: `Bearer ${config.authToken}` } },
     );
