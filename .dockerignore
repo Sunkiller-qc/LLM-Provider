@@ -1,0 +1,7 @@
+# Exclut les fichiers lourds ou sensibles du contexte de build Docker
+config.json
+models/
+*.gguf
+.git
+.gitignore
+node_modules/

@@ -1,9 +1,18 @@
-# Keep the build context tiny. The Dockerfile fetches the agent code from
-# GitHub on its own — none of the host files below need to be in the context.
-config.json
-models/
-*.gguf
-*.md
-.git
-.gitignore
-node_modules/
+{
+  "platformUrl": "https://backend.chia-offer.com",
+  "authToken": "PASTE_JWT_FROM_https://llm.chia-offer.com/provider/setup",
+  "llamaCppPath": "/usr/local/bin/llama-server",
+  "localLlamaPort": 8080,
+  "models": [
+    {
+      "name": "Qwen3-9B-Q4",
+      "path": "/app/models/qwen3-9b-q4.gguf",
+      "ctx": 32768,
+      "nGpuLayers": 99
+    }
+  ],
+  "rateUsdPerHour": 0.50,
+  "payoutPreference": "XCH",
+  "chiaWalletAddress": "xch1...",
+  "idleUnloadSeconds": 300
+}
