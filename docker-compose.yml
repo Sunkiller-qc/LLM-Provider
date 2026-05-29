@@ -1,0 +1,9 @@
+# Local provider config — contains your JWT, NEVER commit.
+config.json
+
+# GGUF model files (huge binaries)
+models/
+*.gguf
+
+# Docker / Compose
+docker-compose.override.yml

@@ -1,0 +1,9 @@
+# Keep the build context tiny. The Dockerfile fetches the agent code from
+# GitHub on its own — none of the host files below need to be in the context.
+config.json
+models/
+*.gguf
+*.md
+.git
+.gitignore
+node_modules/
