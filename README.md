@@ -14,7 +14,13 @@ L'agent :
 
 > Prérequis : Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
+
+
 ```bash
+# 0. One time configure NVIDIA Container Toolkit (Linux)
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
+
 # 1. Copie et remplis la config
 cp config.example.json config.json
 nano config.json          # colle ton JWT + ajuste les chemins de modèles
@@ -23,7 +29,11 @@ nano config.json          # colle ton JWT + ajuste les chemins de modèles
 mkdir -p models
 
 # 3. Lance
-docker compose up -d --build
+
+# pass a specific architecture to speed up the build
+# "80;86;89,100" (A100, 3090, 4090, 5090) 
+docker compose build --build-arg CUDA_ARCHITECTURES="86"
+docker compose up -d
 
 # 4. Suis les logs
 docker compose logs -f
