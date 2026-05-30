@@ -15,6 +15,8 @@ RUN cmake -S /llama.cpp -B /llama.cpp/build \
     -DGGML_CUDA=ON \
     -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
     -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_CUDA_FA_ALL_QUANTS=ON \
+    -DCUBLASLT=ON \
     && cmake --build /llama.cpp/build --target llama-server -j$(nproc)
 
 # ── Étape 2 : image finale ────────────────────────────────────────────────────
