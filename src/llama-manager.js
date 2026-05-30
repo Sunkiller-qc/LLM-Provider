@@ -99,13 +99,37 @@ function startViaBinary(config, model) {
     throw new Error(`Fichier GGUF introuvable : ${model.path}`);
   }
   const port = config.localLlamaPort || 8080;
+
   const args = [
     '--model', model.path,
-    '--ctx-size', (model.ctx ?? 8192).toString(),
-    '--n-gpu-layers', (model.nGpuLayers ?? 99).toString(),
     '--port', port.toString(),
     '--host', '127.0.0.1',
+    '--ctx-size', (model['ctx-size'] ?? model.ctx ?? 8192).toString(),
+    '--n-gpu-layers', (model['n-gpu-layers'] ?? model.nGpuLayers ?? 99).toString(),
   ];
+
+  // Optional value flags — present in config means pass to CLI
+  const valueFlags = [
+    'flash-attn', 'cache-type-k', 'cache-type-v',
+    'batch-size', 'ubatch-size', 'threads', 'threads-batch',
+    'parallel', 'chat-template-kwargs', 'temp', 'top-p', 'top-k',
+    'min-p', 'presence-penalty', 'alias', 'cache-reuse',
+  ];
+  for (const flag of valueFlags) {
+    if (model[flag] !== undefined && model[flag] !== null) {
+      args.push(`--${flag}`, model[flag].toString());
+    }
+  }
+
+  // Boolean flags — only added when true
+  const boolFlags = [
+    'cont-batching', 'jinja', 'metrics', 'swa-full',
+    'no-context-shift', 'mlock',
+  ];
+  for (const flag of boolFlags) {
+    if (model[flag] === true) args.push(`--${flag}`);
+  }
+
   const proc = spawn(config.llamaCppPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   return { proc, port };
 }
