@@ -104,30 +104,27 @@ function startViaBinary(config, model) {
     '--model', model.path,
     '--port', port.toString(),
     '--host', '127.0.0.1',
-    '--ctx-size', (model['ctx-size'] ?? model.ctx ?? 8192).toString(),
-    '--n-gpu-layers', (model['n-gpu-layers'] ?? model.nGpuLayers ?? 99).toString(),
   ];
 
-  // Optional value flags — present in config means pass to CLI
-  const valueFlags = [
-    'flash-attn', 'cache-type-k', 'cache-type-v',
-    'batch-size', 'ubatch-size', 'threads', 'threads-batch',
-    'parallel', 'chat-template-kwargs', 'temp', 'top-p', 'top-k',
-    'min-p', 'presence-penalty', 'alias', 'cache-reuse',
-  ];
-  for (const flag of valueFlags) {
-    if (model[flag] !== undefined && model[flag] !== null) {
-      args.push(`--${flag}`, model[flag].toString());
-    }
+  // Internal config keys that are not llama-server CLI flags
+  const skip = new Set(['name', 'path', 'scriptPath', 'port', 'rateUsdPerHour']);
+
+  // Legacy camelCase aliases → canonical kebab-case CLI flags
+  const aliases = { ctx: 'ctx-size', nGpuLayers: 'n-gpu-layers' };
+
+  const canonical = {};
+  for (const [key, value] of Object.entries(model)) {
+    const resolved = aliases[key] ?? key;
+    if (!(resolved in canonical)) canonical[resolved] = { key, value };
   }
 
-  // Boolean flags — only added when true
-  const boolFlags = [
-    'cont-batching', 'jinja', 'metrics', 'swa-full',
-    'no-context-shift', 'mlock',
-  ];
-  for (const flag of boolFlags) {
-    if (model[flag] === true) args.push(`--${flag}`);
+  for (const [flag, { key, value }] of Object.entries(canonical)) {
+    if (skip.has(key)) continue;
+    if (value === true) {
+      args.push(`--${flag}`);
+    } else if (value !== false && value !== null && value !== undefined) {
+      args.push(`--${flag}`, value.toString());
+    }
   }
 
   console.log(`   [llama-launch] ${config.llamaCppPath} ${args.join(' ')}`);
