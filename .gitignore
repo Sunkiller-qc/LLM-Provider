@@ -3,6 +3,8 @@ config.json
 
 # Fichiers modeles GGUF (gros binaires)
 models/
+# symlink of same
+models 
 *.gguf
 
 # Node
