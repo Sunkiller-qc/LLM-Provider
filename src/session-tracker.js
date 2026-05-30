@@ -138,7 +138,7 @@ export function startSessionProxy({ gpuId, config }) {
       }
 
       if (msg.type === 'benchmark-start') {
-        const { modelName, prompt, maxTokens = 30 } = msg;
+        const { modelName, prompt, maxTokens = 150 } = msg;
         console.log(`   🧪 Benchmark demande pour : ${modelName}`);
 
         // Si benchmark deja fait au setup, on le re-utilise (gagne 1-2 min)
@@ -181,7 +181,10 @@ export function startSessionProxy({ gpuId, config }) {
           const text = [msg.reasoning_content, msg.content].filter(Boolean).join(' ');
           const totalTokens = res.data?.usage?.completion_tokens || text.split(/\s+/).length;
           const inferenceMs = tDone - tLoaded;
-          const tokensPerSec = totalTokens / (inferenceMs / 1000);
+          // Use llama-server's internal timing when available — it measures pure
+          // generation speed and is unaffected by TTFT or token count.
+          const tokensPerSec = res.data?.timings?.predicted_per_second
+            ?? (totalTokens / (inferenceMs / 1000));
 
           // Recupere le n_ctx reellement charge par llama-server (peut differer
           // de la valeur configuree si le modele a un n_ctx_train plus petit).

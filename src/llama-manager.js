@@ -99,13 +99,35 @@ function startViaBinary(config, model) {
     throw new Error(`Fichier GGUF introuvable : ${model.path}`);
   }
   const port = config.localLlamaPort || 8080;
+
   const args = [
     '--model', model.path,
-    '--ctx-size', (model.ctx ?? 8192).toString(),
-    '--n-gpu-layers', (model.nGpuLayers ?? 99).toString(),
     '--port', port.toString(),
     '--host', '127.0.0.1',
   ];
+
+  // Internal config keys that are not llama-server CLI flags
+  const skip = new Set(['name', 'path', 'scriptPath', 'port', 'rateUsdPerHour']);
+
+  // Legacy camelCase aliases → canonical kebab-case CLI flags
+  const aliases = { ctx: 'ctx-size', nGpuLayers: 'n-gpu-layers' };
+
+  const canonical = {};
+  for (const [key, value] of Object.entries(model)) {
+    const resolved = aliases[key] ?? key;
+    if (!(resolved in canonical)) canonical[resolved] = { key, value };
+  }
+
+  for (const [flag, { key, value }] of Object.entries(canonical)) {
+    if (skip.has(key)) continue;
+    if (value === true) {
+      args.push(`--${flag}`);
+    } else if (value !== false && value !== null && value !== undefined) {
+      args.push(`--${flag}`, value.toString());
+    }
+  }
+
+  console.log(`   [llama-launch] ${config.llamaCppPath} ${args.join(' ')}`);
   const proc = spawn(config.llamaCppPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   return { proc, port };
 }
