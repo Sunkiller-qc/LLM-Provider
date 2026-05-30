@@ -130,6 +130,7 @@ function startViaBinary(config, model) {
     if (model[flag] === true) args.push(`--${flag}`);
   }
 
+  console.log(`   [llama-launch] ${config.llamaCppPath} ${args.join(' ')}`);
   const proc = spawn(config.llamaCppPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   return { proc, port };
 }
