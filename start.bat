@@ -1,18 +1,21 @@
 @echo off
-REM Start the provider agent. Double-click after install.bat.
+REM provider-agent/start.bat
+REM Lance l'agent fournisseur. Double-clic suffit apres install.bat.
 
 title GPU Rental - Provider Agent
 
+REM Verif config.json existe
 if not exist config.json (
-    echo [ERROR] config.json not found.
-    echo Run install.bat first
+    echo [ERREUR] config.json introuvable.
+    echo Lance d'abord install.bat
     pause
     exit /b 1
 )
 
+REM Verif node_modules
 if not exist node_modules (
-    echo [ERROR] node_modules not found.
-    echo Run install.bat first
+    echo [ERREUR] node_modules introuvable.
+    echo Lance d'abord install.bat
     pause
     exit /b 1
 )
@@ -22,11 +25,11 @@ echo ============================================
 echo   GPU Rental - Provider Agent
 echo ============================================
 echo.
-echo Ctrl+C for a clean shutdown
+echo Ctrl+C pour arreter proprement
 echo.
 
 call npm start
 
 echo.
-echo Agent stopped.
+echo Agent arrete.
 pause

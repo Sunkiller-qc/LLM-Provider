@@ -1,6 +1,7 @@
 @echo off
-REM One-click installer. Double-click is enough.
-REM Auto-detects environment, configures config.json, guides auth.
+REM provider-agent/install.bat
+REM Installeur en un clic. Double-clic suffit.
+REM Detecte tout automatiquement, configure config.json, guide l'auth.
 
 setlocal enabledelayedexpansion
 title GPU Rental - Provider Agent Installer
@@ -11,92 +12,92 @@ echo   GPU Rental - Provider Agent Installer
 echo ============================================
 echo.
 
-REM === Check Node.js ===
+REM === Verif Node.js ===
 where node >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] Node.js is not installed.
+    echo [ERREUR] Node.js n'est pas installe.
     echo.
-    echo Download and install Node.js 20 LTS:
+    echo Telecharge et installe Node.js 20 LTS :
     echo   https://nodejs.org/
     echo.
-    echo Then double-click install.bat again
+    echo Puis double-clic sur install.bat
     pause
     exit /b 1
 )
 for /f "tokens=*" %%v in ('node --version') do set NODE_VERSION=%%v
-echo [OK] Node.js: !NODE_VERSION!
+echo [OK] Node.js : !NODE_VERSION!
 
-REM === Check nvidia-smi ===
+REM === Verif nvidia-smi ===
 where nvidia-smi >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] nvidia-smi not found.
-    echo        Auto-setup will fail without NVIDIA drivers.
-    echo        Install drivers: https://nvidia.com/drivers
+    echo [WARN] nvidia-smi introuvable.
+    echo        L'auto-setup va planter sans drivers NVIDIA.
+    echo        Installe les drivers : https://nvidia.com/drivers
     echo.
-    set /p continue="Continue anyway? (y/N): "
-    if /i not "!continue!"=="y" exit /b 1
+    set /p continue="Continuer quand meme ? (o/N) : "
+    if /i not "!continue!"=="o" exit /b 1
 )
 
-REM === cloudflared optional (debug only) ===
+REM === Cloudflared optionnel (pour debug uniquement) ===
 where cloudflared >nul 2>&1
 if errorlevel 1 (
-    echo [INFO] cloudflared not installed — OPTIONAL, the agent works without it.
-    echo        Download if you want to test llama via a public URL:
+    echo [INFO] cloudflared non installe — c'est OPTIONNEL, l'agent marchera sans.
+    echo        Telecharge si tu veux pouvoir tester ton llama via une URL publique :
     echo        https://github.com/cloudflare/cloudflared/releases/latest
     echo.
 ) else (
-    echo [OK] cloudflared detected (public debug tunnel)
+    echo [OK] cloudflared detecte (utilise pour tunnel public debug)
 )
 
-REM === Node dependencies ===
+REM === Installation deps Node ===
 if not exist node_modules (
     echo.
-    echo === Installing Node dependencies ===
-    echo (~1 minute the first time)
+    echo === Installation des dependances Node ===
+    echo (~1 minute la 1re fois)
     echo.
     call npm install --silent
     if errorlevel 1 (
-        echo [ERROR] npm install failed.
+        echo [ERREUR] npm install a echoue.
         pause
         exit /b 1
     )
-    echo [OK] Dependencies installed
+    echo [OK] Dependances installees
 )
 
 echo.
 echo ============================================
-echo   Auto-detection and configuration
+echo   Auto-detection et configuration
 echo ============================================
 echo.
-echo This script will:
-echo   1. Detect your GPU automatically
-echo   2. Detect llama-server in PATH
-echo   3. Scan disk for .gguf models
-echo   4. Ask for your Chia address (xch1...)
-echo   5. Ask for the JWT from the frontend sign-in
+echo Le script va :
+echo   1. Detecter ton GPU et llama-server
+echo   2. URL backend (defaut https://backend.chia-offer.com) + solo/pool
+echo   3. Selectionner tes modeles (.bat ou .gguf)
+echo   4. Si pool : SHA256 du GGUF (obligatoire, 1-2 min)
+echo   5. Adresse Chia + JWT + benchmark + inscription
 echo.
 pause
 
 call npm run setup-auto
 if errorlevel 1 (
     echo.
-    echo [ERROR] Auto-setup failed.
-    echo You can retry with: npm run setup-auto
+    echo [ERREUR] L'auto-setup a echoue.
+    echo Tu peux relancer avec : npm run setup-auto
     pause
     exit /b 1
 )
 
 echo.
 echo ============================================
-echo   All set!
+echo   Tout est pret !
 echo ============================================
 echo.
-echo To start your agent:
-echo   Double-click: start.bat
+echo Pour lancer ton agent :
+echo   Double-clic sur : start.bat
 echo.
-echo To change config:
-echo   - Edit config.json (notepad)
-echo   - OR use the frontend dashboard, click Edit on your GPU
-echo   - OR run install.bat again
+echo Pour modifier ta config :
+echo   - Edite config.json (notepad)
+echo   - OU va sur ton dashboard frontend, clique "Modifier" sur ton GPU
+echo   - OU relance : install.bat
 echo.
 pause

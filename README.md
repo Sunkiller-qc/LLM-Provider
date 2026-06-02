@@ -85,6 +85,7 @@ See `config.example.json` for all fields. Essentials:
 | `npm run setup-auto` | Quick Windows-friendly setup |
 | `npm run wizard` | Full interactive setup with benchmark |
 | `npm run setup` | Minimal setup (wallet auth only) |
+| `npm run join-pool` | Join a model pool without re-running full setup |
 | `npm run mock` | Fake agent for testing without a GPU |
 
 ---
@@ -98,7 +99,9 @@ The agent **does not load any model at boot**. On the first `session-start`, it 
 ```
 ├── src/
 │   ├── index.js           # Entry point
+│   ├── defaults.js        # Default platform URLs
 │   ├── pool-setup.js      # Pool membership (GGUF hash)
+│   ├── join-pool.js       # CLI to join a pool later
 │   ├── gguf-hash.js       # SHA256 of model files
 │   ├── llama-manager.js   # llama-server (lazy load, swap)
 │   ├── session-tracker.js # WebSocket session proxy
@@ -110,7 +113,7 @@ The agent **does not load any model at boot**. On the first `session-start`, it 
 └── models/                # .gguf files (not versioned)
 ```
 
-Quick Windows guide: `QUICKSTART.md`.
+Quick Windows guide: `QUICKSTART.md`. Docker builds from `src/` at the repo root only — the `provider-agent/` folder is not used in the image.
 
 ---
 

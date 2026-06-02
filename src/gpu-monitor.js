@@ -1,5 +1,5 @@
-// src/gpu-monitor.js
-// GPU detection via nvidia-smi
+// provider-agent/src/gpu-monitor.js
+// Détection GPU via nvidia-smi
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -18,12 +18,12 @@ export async function detectGpu() {
       vramGb: Math.floor(vramMb / 1024)
     };
   } catch (err) {
-    throw new Error('nvidia-smi not available. Are NVIDIA drivers installed?');
+    throw new Error('nvidia-smi non disponible. Drivers NVIDIA installés ?');
   }
 }
 
 /**
- * List ALL detected GPUs with their index (for multi-GPU).
+ * Liste TOUS les GPUs detectes avec leur index (pour multi-GPU).
  */
 export async function detectAllGpus() {
   try {
@@ -42,7 +42,7 @@ export async function detectAllGpus() {
       };
     });
   } catch (err) {
-    throw new Error('nvidia-smi not available. Are NVIDIA drivers installed?');
+    throw new Error('nvidia-smi non disponible. Drivers NVIDIA installés ?');
   }
 }
 

@@ -12,6 +12,7 @@
     "setup": "node src/setup.js",
     "setup-auto": "node src/auto-setup.js",
     "wizard": "node src/wizard.js",
+    "join-pool": "node src/join-pool.js",
     "mock": "node src/mock.js"
   },
   "dependencies": {

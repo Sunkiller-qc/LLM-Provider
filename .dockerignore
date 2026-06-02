@@ -5,6 +5,7 @@ models/
 .git
 .gitignore
 node_modules/
+provider-agent/
 
 *.bat
 QUICKSTART.md

@@ -1,10 +1,11 @@
 @echo off
-REM Mock mode: test without GPU/llama.cpp. Simulates a provider.
+REM provider-agent/start-mock.bat
+REM Mode mock pour tester sans GPU/llama.cpp. Simule un fournisseur.
 
 title GPU Rental - Provider Agent (MOCK)
 
 if not exist config.json (
-    echo [ERROR] config.json not found. Run install.bat first.
+    echo [ERREUR] config.json introuvable. Lance install.bat d'abord.
     pause
     exit /b 1
 )
@@ -14,8 +15,8 @@ echo ============================================
 echo   GPU Rental - Provider Agent (MOCK)
 echo ============================================
 echo.
-echo No GPU or llama.cpp required.
-echo This mode simulates a provider to test the platform.
+echo Aucun GPU/llama.cpp necessaire.
+echo Ce mode simule un fournisseur pour tester la plateforme.
 echo.
 
 call npm run mock

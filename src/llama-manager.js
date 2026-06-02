@@ -1,17 +1,17 @@
-// src/llama-manager.js
-// llama.cpp server management with lazy loading and model swap.
+// provider-agent/src/llama-manager.js
+// Gestion du serveur llama.cpp avec lazy loading et swap de modele.
 //
-// 2 modes supported per model in config.json:
+// 2 modes supportes par modele dans config.json :
 //
-//   Mode A — existing .bat (RECOMMENDED for Windows):
+//   Mode A — .bat existant (RECOMMANDE pour Windows) :
 //     {
 //       "name": "Qwen3-30B-Q4",
-//       "scriptPath": "D:\\bats\\qwen3-30b.bat",  // your .bat with --model, --port, etc.
-//       "port": 8080,                              // optional, otherwise parsed from .bat
+//       "scriptPath": "D:\\bats\\qwen3-30b.bat",  // ton .bat avec --model, --port, etc.
+//       "port": 8080,                              // optionnel, sinon parse depuis le .bat
 //       "rateUsdPerHour": 0.50
 //     }
 //
-//   Mode B — direct GGUF path (requires global llamaCppPath):
+//   Mode B — chemin GGUF direct (necessite llamaCppPath global) :
 //     {
 //       "name": "Qwen3-30B-Q4",
 //       "path": "D:\\models\\qwen3.gguf",
@@ -46,14 +46,14 @@ async function waitForReady(port, timeoutMs = 120_000) {
     } catch (_) { /* not ready yet */ }
     await new Promise(r => setTimeout(r, 500));
   }
-  throw new Error(`llama.cpp not ready after ${timeoutMs}ms at ${url}`);
+  throw new Error(`llama.cpp pas pret apres ${timeoutMs}ms sur ${url}`);
 }
 
 function findModel(config, modelName) {
   const model = (config.models || []).find(m => m.name === modelName);
   if (!model) {
     const known = (config.models || []).map(m => m.name).join(', ');
-    throw new Error(`Model "${modelName}" unknown in config.models (known: ${known})`);
+    throw new Error(`Modele "${modelName}" inconnu dans config.models (connus: ${known})`);
   }
   return model;
 }
@@ -67,22 +67,22 @@ function parsePortFromBatFile(scriptPath) {
 }
 
 /**
- * Mode A: run a .bat (or .sh on Linux) that handles everything.
- * Extract port from config or by parsing .bat content.
+ * Mode A : lance un .bat (ou .sh sur Linux) qui s'occupe de tout.
+ * On extrait le port soit du config soit en parsant le contenu du .bat.
  */
 function startViaScript(model, defaultPort) {
   const scriptPath = model.scriptPath;
   if (!fs.existsSync(scriptPath)) {
-    throw new Error(`Script not found: ${scriptPath}`);
+    throw new Error(`Script introuvable : ${scriptPath}`);
   }
 
   const port = model.port || parsePortFromBatFile(scriptPath) || defaultPort || 8080;
 
-  // On Windows: cmd /c runs the .bat in a window. The llama-server binary
-  // will be a child process (grandchild of cmd). To kill it later we
-  // use taskkill /T /PID <cmd pid>.
-  // cwd: the .bat folder — otherwise relative paths (./llama-server.exe,
-  // .\models\xxx.gguf) won't resolve, as if launched from elsewhere.
+  // Sur Windows : cmd /c lance le .bat dans une fenetre. Le binaire llama-server
+  // sera un sous-process (grand-fils du cmd). Pour le killer plus tard on
+  // utilisera taskkill /T /PID <pid du cmd>.
+  // cwd : le dossier du .bat — sinon les chemins relatifs (./llama-server.exe,
+  // .\models\xxx.gguf) ne resolvent pas, comme si on lancait depuis ailleurs.
   const isWin = process.platform === 'win32';
   const scriptCwd = path.dirname(path.resolve(scriptPath));
   const proc = isWin
@@ -93,14 +93,14 @@ function startViaScript(model, defaultPort) {
 }
 
 /**
- * Mode B: launch llama-server binary directly with computed args.
+ * Mode B : lance directement le binaire llama-server avec args calcules.
  */
 function startViaBinary(config, model) {
   if (!config.llamaCppPath || !fs.existsSync(config.llamaCppPath)) {
-    throw new Error(`Invalid llamaCppPath: ${config.llamaCppPath} (use scriptPath in your models[] to avoid this config)`);
+    throw new Error(`llamaCppPath invalide : ${config.llamaCppPath} (utilise scriptPath dans tes models[] pour eviter cette config)`);
   }
   if (!model.path || !fs.existsSync(model.path)) {
-    throw new Error(`GGUF file not found: ${model.path}`);
+    throw new Error(`Fichier GGUF introuvable : ${model.path}`);
   }
   const port = config.localLlamaPort || 8080;
   const args = [
@@ -115,9 +115,9 @@ function startViaBinary(config, model) {
 }
 
 /**
- * Ensure llama.cpp is running with the requested model.
- * No-op if already the right model. Stop + start otherwise.
- * Serialized: if two sessions arrive at once, the 2nd awaits the 1st.
+ * S'assure que llama.cpp tourne avec le modele demande.
+ * No-op si deja le bon modele. Stop + start sinon.
+ * Serialise : si deux sessions arrivent en meme temps, le 2e await le 1er.
  */
 export async function ensureModelLoaded(config, modelName) {
   if (loadPromise) await loadPromise;
@@ -130,10 +130,10 @@ export async function ensureModelLoaded(config, modelName) {
     const model = findModel(config, modelName);
 
     if (llamaProcess) {
-      console.log(`   🔄 Model swap: ${currentModelName} -> ${modelName}`);
+      console.log(`   🔄 Swap modele : ${currentModelName} -> ${modelName}`);
       await stopLlamaServer();
     } else {
-      console.log(`   🚀 Initial load of model ${modelName}`);
+      console.log(`   🚀 Chargement initial du modele ${modelName}`);
     }
 
     const { proc, port } = model.scriptPath
@@ -144,13 +144,13 @@ export async function ensureModelLoaded(config, modelName) {
     proc.stdout.on('data', d => process.stdout.write(`[llama] ${d}`));
     proc.on('exit', (code) => {
       const wasModel = currentModelName;
-      console.log(`llama.cpp stopped (code ${code}, model ${wasModel})`);
+      console.log(`llama.cpp arrete (code ${code}, modele ${wasModel})`);
       if (llamaProcess === proc) {
         llamaProcess = null;
         currentModelName = null;
         currentPort = null;
       }
-      // Unexpected crash (not a graceful stopLlamaServer): signal the
+      // Unexpected crash (not a graceful stopLlamaServer) : signal the
       // backend so the in-flight sessions can be ended with a clear error.
       if (!expectingExit && wasModel && onCrashCallback) {
         try {
@@ -171,7 +171,7 @@ export async function ensureModelLoaded(config, modelName) {
       throw err;
     }
     currentModelName = modelName;
-    console.log(`   ✅ llama.cpp ready with ${modelName} on port ${port}`);
+    console.log(`   ✅ llama.cpp pret avec ${modelName} sur port ${port}`);
   })();
 
   try {
@@ -192,12 +192,12 @@ export async function stopLlamaServer() {
   currentModelName = null;
   currentPort = null;
 
-  // On Windows, if launched via "cmd /c .bat", kill the entire tree
-  // otherwise llama-server.exe stays alive as an orphan.
+  // Sur Windows, si on a lance via "cmd /c .bat", il faut killer l'arbre
+  // entier sinon llama-server.exe reste vivant en orphelin.
   if (process.platform === 'win32' && pid) {
     try {
       await execAsync(`taskkill /F /T /PID ${pid}`);
-    } catch (_) { /* may already be dead */ }
+    } catch (_) { /* peut deja etre mort */ }
   } else {
     try { proc.kill('SIGTERM'); } catch (_) {}
   }
@@ -210,7 +210,7 @@ export async function stopLlamaServer() {
     proc.once('exit', () => { clearTimeout(timeout); resolve(); });
   });
 
-  // Safety: if llama-server.exe is still lingering (Windows orphan case)
+  // Securite : si llama-server.exe traine encore (cas Windows orphelin)
   if (process.platform === 'win32') {
     try { await execAsync('taskkill /F /IM llama-server.exe /T'); } catch (_) {}
   }

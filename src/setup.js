@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// src/setup.js
-// Interactive setup: guides the provider through wallet auth + config.json update.
+// provider-agent/src/setup.js
+// Setup interactif : guide le fournisseur dans l'auth wallet + update config.json.
 //
-// Usage: npm run setup
+// Usage : npm run setup
 
 import fs from 'fs';
 import path from 'path';
@@ -19,10 +19,10 @@ function loadConfig() {
     return JSON.parse(fs.readFileSync(configPath, 'utf8'));
   }
   if (fs.existsSync(examplePath)) {
-    console.log('Creating config.json from config.example.json');
+    console.log('Création de config.json depuis config.example.json');
     return JSON.parse(fs.readFileSync(examplePath, 'utf8'));
   }
-  throw new Error('Neither config.json nor config.example.json found');
+  throw new Error('Ni config.json ni config.example.json trouvé');
 }
 
 function saveConfig(config) {
@@ -41,86 +41,90 @@ async function main() {
 
   const config = loadConfig();
 
-  const platformUrl = (await prompt(`Backend URL [${config.platformUrl || 'http://localhost:3001'}]: `))
-    || config.platformUrl || 'http://localhost:3001';
+  const { DEFAULT_PLATFORM_URL, normalizePlatformUrl } = await import('./defaults.js');
+  const platformUrl = normalizePlatformUrl(
+    (await prompt(`URL du backend API [${config.platformUrl || DEFAULT_PLATFORM_URL}] : `))
+    || config.platformUrl
+    || DEFAULT_PLATFORM_URL,
+  );
   config.platformUrl = platformUrl;
 
-  const walletAddress = (await prompt(`Your Chia address (xch1...) [${config.chiaWalletAddress || ''}]: `))
+  const walletAddress = (await prompt(`Ton adresse Chia (xch1...) [${config.chiaWalletAddress || ''}] : `))
     || config.chiaWalletAddress;
   if (!walletAddress || !walletAddress.startsWith('xch1')) {
-    console.error('Invalid address (must start with xch1)');
+    console.error('Adresse invalide (doit commencer par xch1)');
     process.exit(1);
   }
   config.chiaWalletAddress = walletAddress;
 
   console.log('');
-  console.log(`1. Requesting challenge from ${platformUrl}...`);
+  console.log(`1. Demande du challenge a ${platformUrl}...`);
   let challenge;
   try {
     const { data } = await axios.post(`${platformUrl}/api/auth/challenge`, { walletAddress });
     challenge = data.challenge;
-    console.log(`   OK: challenge received (expires in ${Math.round(data.ttlMs / 60000)} min)`);
+    console.log(`   OK : challenge recu (expire dans ${Math.round(data.ttlMs / 60000)} min)`);
   } catch (err) {
-    console.error(`   FAILED: ${err.response?.data?.error || err.message}`);
+    console.error(`   ECHEC : ${err.response?.data?.error || err.message}`);
     process.exit(1);
   }
 
   console.log('');
-  console.log('2. SIGN this challenge with your wallet:');
+  console.log('2. SIGNE ce challenge avec ton wallet :');
   console.log('');
-  console.log(`   Challenge (hex 32 bytes):`);
+  console.log(`   Challenge (hex 32 bytes) :`);
   console.log(`   ${challenge}`);
   console.log('');
-  console.log('   Signing options:');
-  console.log('   a) Goby Wallet (browser): open DevTools console and run:');
+  console.log('   Options de signature :');
+  console.log('   a) Goby Wallet (browser) : ouvre la console DevTools et execute :');
   console.log(`      await window.chia.request({ method: 'signMessage', params: { message: '${challenge}' } })`);
-  console.log('      Copy the returned JSON (contains signature + pubkey/publicKey)');
+  console.log('      Copie le JSON retourne (contient signature + pubkey/publicKey)');
   console.log('');
-  console.log('   b) Chia CLI / custom Python script with AugSchemeMPL.sign(sk, bytes.fromhex(challenge))');
+  console.log('   b) Chia CLI / script Python custom avec AugSchemeMPL.sign(sk, bytes.fromhex(challenge))');
   console.log('');
 
-  const pubkey = await prompt('   Paste your pubkey (hex 48 bytes): ');
-  const signature = await prompt('   Paste your signature (hex 96 bytes): ');
+  const pubkey = await prompt('   Colle ta pubkey (hex 48 bytes) : ');
+  const signature = await prompt('   Colle ta signature (hex 96 bytes) : ');
 
   if (pubkey.length !== 96) {  // 48 bytes = 96 hex chars
-    console.error(`   FAILED: pubkey must be 96 hex chars (got ${pubkey.length})`);
+    console.error(`   ECHEC : pubkey doit faire 96 hex chars (recu ${pubkey.length})`);
     process.exit(1);
   }
   if (signature.length !== 192) {  // 96 bytes = 192 hex chars
-    console.error(`   FAILED: signature must be 192 hex chars (got ${signature.length})`);
+    console.error(`   ECHEC : signature doit faire 192 hex chars (recu ${signature.length})`);
     process.exit(1);
   }
 
   console.log('');
-  console.log('3. Verifying signature...');
+  console.log('3. Verification de la signature...');
   let token;
   try {
     const { data } = await axios.post(`${platformUrl}/api/auth/verify`, {
       walletAddress, pubkey, signature,
     });
     token = data.token;
-    console.log(`   OK: JWT received (user ${data.user.id})`);
+    console.log(`   OK : JWT recu (user ${data.user.id})`);
   } catch (err) {
-    console.error(`   FAILED: ${err.response?.data?.error || err.message}`);
-    console.error('   Verify that the pubkey matches the key that signed.');
+    console.error(`   ECHEC : ${err.response?.data?.error || err.message}`);
+    console.error('   Verifie que la pubkey correspond bien a la cle qui a signe.');
     process.exit(1);
   }
 
   config.authToken = token;
 
   console.log('');
-  console.log('4. Optional GPU configuration (Enter to keep existing):');
+  console.log('4. Configuration GPU optionnelle (Enter pour garder existant) :');
 
-  const llamaCpp = await prompt(`   llama-server path [${config.llamaCppPath || ''}]: `);
+  const llamaCpp = await prompt(`   Chemin llama-server [${config.llamaCppPath || ''}] : `);
   if (llamaCpp) config.llamaCppPath = llamaCpp;
 
-  const rate = await prompt(`   Rate USD/hour [${config.rateUsdPerHour ?? 0.5}]: `);
+  const rate = await prompt(`   Tarif USD/heure [${config.rateUsdPerHour ?? 0.5}] : `);
   if (rate) config.rateUsdPerHour = parseFloat(rate);
 
-  const payout = await prompt(`   Payout currency (BYC/XCH) [${config.payoutPreference || 'XCH'}]: `);
+  const payout = await prompt(`   Devise payout (BYC/XCH) [${config.payoutPreference || 'XCH'}] : `);
   if (payout) {
     if (!['BYC', 'XCH'].includes(payout.toUpperCase())) {
-      console.error('   payoutPreference must be BYC or XCH');
+      console.error('   payoutPreference doit etre BYC ou XCH');
       process.exit(1);
     }
     config.payoutPreference = payout.toUpperCase();
@@ -130,23 +134,23 @@ async function main() {
 
   console.log('');
   console.log('==========================================');
-  console.log('  Setup complete!');
+  console.log('  Setup termine !');
   console.log('==========================================');
   console.log('');
-  console.log(`Config saved to ${configPath}`);
-  console.log(`JWT token valid for 7 days.`);
+  console.log(`Config sauvegardee dans ${configPath}`);
+  console.log(`Token JWT valide 7 jours.`);
   console.log('');
-  console.log('You can now start the agent:');
+  console.log('Tu peux maintenant lancer l\'agent :');
   console.log('  npm start');
   console.log('');
-  console.log('Reminder: verify that llamaCppPath and models[].path point to');
-  console.log('existing files before launching.');
+  console.log('Rappel : verifie que llamaCppPath et models[].path pointent bien vers');
+  console.log('des fichiers existants avant de lancer.');
 
   rl.close();
 }
 
 main().catch(err => {
-  console.error('Fatal error:', err.message);
+  console.error('Erreur fatale :', err.message);
   rl.close();
   process.exit(1);
 });
