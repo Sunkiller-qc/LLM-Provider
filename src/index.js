@@ -1,5 +1,5 @@
-// provider-agent/src/index.js
-// Agent a lancer sur la machine GPU du fournisseur
+// src/index.js
+// Agent to run on the provider's GPU machine
 
 import 'dotenv/config';
 import fs from 'fs';
@@ -11,12 +11,13 @@ import { stopLlamaServer } from './llama-manager.js';
 import { startTunnel, stopTunnel } from './tunnel.js';
 import { startSessionProxy } from './session-tracker.js';
 import { createAuthClient } from './auth.js';
+import { verifyPoolMembershipOnStart } from './pool-setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
 
 if (!fs.existsSync(configPath)) {
-  console.error('❌ config.json manquant. Copie config.example.json en config.json et edite-le.');
+  console.error('❌ config.json missing. Copy config.example.json to config.json and edit it.');
   process.exit(1);
 }
 
@@ -31,16 +32,16 @@ let registeredGpuId = null;
 async function cleanup(exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log('\n🛑 Arret en cours...');
+  console.log('\n🛑 Shutting down...');
 
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   if (proxyHandle?.stop) proxyHandle.stop();
 
-  // Marque le GPU offline cote backend (au lieu d'attendre le timeout heartbeat)
+  // Mark GPU offline on backend (instead of waiting for heartbeat timeout)
   if (authClient && registeredGpuId) {
     try {
       await authClient.patch(`/api/gpus/${registeredGpuId}`, { isOnline: false });
-      console.log('   GPU marque hors-ligne sur le site');
+      console.log('   GPU marked offline on the platform');
     } catch (_) {}
   }
 
@@ -49,7 +50,7 @@ async function cleanup(exitCode = 0) {
     stopTunnel(),
   ]);
 
-  console.log('   Cleanup termine');
+  console.log('   Cleanup complete');
   process.exit(exitCode);
 }
 
@@ -57,66 +58,66 @@ process.on('SIGINT', () => cleanup(0));
 process.on('SIGTERM', () => cleanup(0));
 
 async function main() {
-  console.log('🖥  GPU Rental Provider Agent — demarrage');
+  console.log('🖥  GPU Rental Provider Agent — starting');
 
   const { client, jwtPayload } = createAuthClient(config);
   authClient = client;
-  console.log(`   Auth OK — wallet ${jwtPayload?.walletAddress || '(inconnu)'}`);
+  console.log(`   Auth OK — wallet ${jwtPayload?.walletAddress || '(unknown)'}`);
 
   const gpuInfo = await detectGpu();
-  console.log(`   GPU detecte: ${gpuInfo.model} (${gpuInfo.vramGb} Go VRAM)`);
+  console.log(`   GPU detected: ${gpuInfo.model} (${gpuInfo.vramGb} GB VRAM)`);
 
   if (!Array.isArray(config.models) || config.models.length === 0) {
     throw new Error(
-      'config.models est vide. Relance npm run setup-auto (ou install.bat) et selectionne au moins un modele.'
+      'config.models is empty. Re-run npm run setup-auto (or install.bat) and select at least one model.'
     );
   }
 
-  // Verif chaque modele a un script valide OU un GGUF valide
+  // Verify each model has a valid script OR a valid GGUF
   const fsCheck = await import('fs');
   const issues = [];
   for (const m of config.models) {
     if (m.scriptPath) {
       if (!fsCheck.existsSync(m.scriptPath)) {
-        issues.push(`${m.name} : script introuvable -> ${m.scriptPath}`);
+        issues.push(`${m.name}: script not found -> ${m.scriptPath}`);
       }
     } else if (m.path) {
       if (!fsCheck.existsSync(m.path)) {
-        issues.push(`${m.name} : GGUF introuvable -> ${m.path}`);
+        issues.push(`${m.name}: GGUF not found -> ${m.path}`);
       }
     } else {
-      issues.push(`${m.name} : ni scriptPath ni path defini`);
+      issues.push(`${m.name}: neither scriptPath nor path defined`);
     }
   }
 
-  // llamaCppPath n'est requis QUE pour les modeles en mode GGUF direct (sans scriptPath)
+  // llamaCppPath is required ONLY for models in direct GGUF mode (without scriptPath)
   const needsLlamaPath = config.models.some(m => !m.scriptPath);
   if (needsLlamaPath) {
     if (!config.llamaCppPath || !fsCheck.existsSync(config.llamaCppPath)) {
-      issues.push(`llamaCppPath requis (au moins un modele utilise GGUF direct) mais introuvable : ${config.llamaCppPath}`);
+      issues.push(`llamaCppPath required (at least one model uses direct GGUF) but not found: ${config.llamaCppPath}`);
     }
   }
 
   if (issues.length > 0) {
     console.error('');
-    console.error('❌ Problemes de config :');
+    console.error('❌ Config issues:');
     for (const i of issues) console.error(`   · ${i}`);
     console.error('');
-    console.error('Solutions :');
-    console.error('  1. Edite config.json (notepad) pour corriger');
-    console.error('  2. Ou relance install.bat / npm run setup-auto');
-    throw new Error(`${issues.length} probleme(s) de config`);
+    console.error('Solutions:');
+    console.error('  1. Edit config.json (notepad) to fix');
+    console.error('  2. Or re-run install.bat / npm run setup-auto');
+    throw new Error(`${issues.length} config issue(s)`);
   }
 
-  console.log(`   Modeles dispo : ${config.models.map(m => m.name).join(', ')}`);
-  console.log('   (llama.cpp sera charge a la demande lors de la 1ere session)');
+  console.log(`   Available models: ${config.models.map(m => m.name).join(', ')}`);
+  console.log('   (llama.cpp will be loaded on demand on first session)');
 
-  console.log('   Demarrage tunnel Cloudflare (optionnel)...');
+  console.log('   Starting Cloudflare tunnel (optional)...');
   const tunnelUrl = await startTunnel(config.localLlamaPort);
   if (tunnelUrl) {
-    console.log(`   ✅ Tunnel actif: ${tunnelUrl}`);
+    console.log(`   ✅ Tunnel active: ${tunnelUrl}`);
   } else {
-    console.log('   (sans tunnel — le WS suffit pour le routing client<->agent)');
+    console.log('   (no tunnel — WS is enough for client<->agent routing)');
   }
 
   let gpuId = config.gpuId;
@@ -125,8 +126,8 @@ async function main() {
     ?? 0.30;
 
   if (gpuId) {
-    // Deja enregistre lors du setup, on met juste a jour la config + status
-    console.log(`   GPU deja enregistre (${gpuId}), mise a jour...`);
+    // Already registered during setup, just update config + status
+    console.log(`   GPU already registered (${gpuId}), updating...`);
     try {
       await client.patch(`/api/gpus/${gpuId}`, {
         availableModels: config.models,
@@ -135,11 +136,11 @@ async function main() {
         tunnelUrl,
         isOnline: true,
       });
-      console.log(`   ✅ GPU en ligne sur le site`);
+      console.log(`   ✅ GPU online on the platform`);
     } catch (err) {
-      // Si PATCH echoue (ex: GPU supprime du backend), on retombe sur un register
+      // If PATCH fails (e.g. GPU deleted from backend), fall back to register
       if (err.response?.status === 404) {
-        console.log(`   GPU ${gpuId} introuvable cote backend, re-enregistrement...`);
+        console.log(`   GPU ${gpuId} not found on backend, re-registering...`);
         gpuId = null;
       } else {
         throw err;
@@ -148,7 +149,7 @@ async function main() {
   }
 
   if (!gpuId) {
-    console.log('   Enregistrement aupres de la plateforme...');
+    console.log('   Registering with the platform...');
     const { data: registration } = await client.post('/api/gpus/register', {
       gpuModel: gpuInfo.model,
       vramGb: gpuInfo.vramGb,
@@ -159,24 +160,34 @@ async function main() {
     });
     gpuId = registration.gpu.id;
     config.gpuId = gpuId;
-    // Sauvegarde pour la prochaine fois
+    // Save for next time
     try {
       const fsMod = await import('fs');
       fsMod.writeFileSync(configPath, JSON.stringify(config, null, 2));
     } catch (_) {}
-    console.log(`   ✅ Enregistre: GPU ID = ${gpuId}`);
+    console.log(`   ✅ Registered: GPU ID = ${gpuId}`);
   }
 
   registeredGpuId = gpuId;
+
+  if (config.poolMembership?.poolNumber) {
+    try {
+      await verifyPoolMembershipOnStart({ config, client, gpuId, configPath });
+    } catch (err) {
+      console.error(`❌ Pool verification failed: ${err.message}`);
+      process.exit(1);
+    }
+  }
+
   proxyHandle = startSessionProxy({ gpuId, config });
 
   heartbeatTimer = setInterval(async () => {
     try {
       await client.post(`/api/gpus/${gpuId}/heartbeat`, {});
     } catch (err) {
-      // Si le GPU n'existe plus cote backend (DB reset), on se re-enregistre
+      // If GPU no longer exists on backend (DB reset), re-register
       if (err.response?.status === 404) {
-        console.log('   GPU disparu cote backend (DB reset ?), re-enregistrement...');
+        console.log('   GPU gone on backend (DB reset?), re-registering...');
         try {
           const { data } = await client.post('/api/gpus/register', {
             gpuModel: gpuInfo.model,
@@ -191,12 +202,12 @@ async function main() {
           config.gpuId = gpuId;
           const fsMod = await import('fs');
           fsMod.writeFileSync(configPath, JSON.stringify(config, null, 2));
-          console.log(`   ✅ Re-enregistre, nouveau GPU ID = ${gpuId}`);
-          // Reconnecte le WS sur le nouveau gpuId
+          console.log(`   ✅ Re-registered, new GPU ID = ${gpuId}`);
+          // Reconnect WS on new gpuId
           if (proxyHandle?.stop) proxyHandle.stop();
           proxyHandle = startSessionProxy({ gpuId, config });
         } catch (regErr) {
-          console.error('   Re-register echoue:', regErr.response?.data?.error || regErr.message);
+          console.error('   Re-register failed:', regErr.response?.data?.error || regErr.message);
         }
       } else {
         console.error('Heartbeat failed:', err.response?.status, err.message);
@@ -204,10 +215,10 @@ async function main() {
     }
   }, 30_000);
 
-  console.log('✅ Agent pret — en attente de sessions');
+  console.log('✅ Agent ready — waiting for sessions');
 }
 
 main().catch(err => {
-  console.error('❌ Erreur fatale:', err.response?.data || err.message);
+  console.error('❌ Fatal error:', err.response?.data || err.message);
   cleanup(1);
 });

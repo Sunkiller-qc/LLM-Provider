@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// provider-agent/src/auto-setup.js
-// Auto-setup ultra simplifie : detecte GPU + llama-server + scan disque pour
-// les .gguf + suggere les tarifs. Le user repond seulement a 2-3 questions :
-//   - Son adresse Chia
-//   - Ou sont ses modeles (si pas trouves auto)
-//   - Le JWT obtenu en signant sur le frontend
+// src/auto-setup.js
+// Ultra-simplified auto-setup: detects GPU + llama-server + disk scan for
+// .gguf + suggests rates. The user only answers 2-3 questions:
+//   - Their Chia address
+//   - Where their models are (if not found automatically)
+//   - The JWT obtained by signing on the frontend
 //
-// Usage : npm run setup-auto (ou install.bat sur Windows)
+// Usage: npm run setup-auto (or install.bat on Windows)
 
 import fs from 'fs';
 import path from 'path';
@@ -18,6 +18,7 @@ import axios from 'axios';
 import { detectAllGpus } from './gpu-monitor.js';
 import { detectLlamaServer, detectCloudflared, findFreePort, scanLaunchScripts } from './detect.js';
 import { ensureModelLoaded, stopLlamaServer, getCurrentPort } from './llama-manager.js';
+import { runPoolSetupStep } from './pool-setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -38,10 +39,10 @@ function info(s) { console.log(`  ${c.dim}·${c.reset} ${s}`); }
 function warn(s) { console.log(`  ${c.yellow}⚠${c.reset} ${s}`); }
 function step(s) { console.log(`\n${c.bold}${c.magenta}▶ ${s}${c.reset}`); }
 
-// === Tarifs suggeres selon taille modele ===
+// === Suggested rates based on model size ===
 function suggestRate(filename) {
   const lower = filename.toLowerCase();
-  // Cherche un pattern comme "8B", "30B", "70B" dans le nom
+  // Look for a pattern like "8B", "30B", "70B" in the name
   const match = lower.match(/(\d+(?:\.\d+)?)\s*b\b/i);
   if (!match) return 0.30;
   const size = parseFloat(match[1]);
@@ -52,7 +53,7 @@ function suggestRate(filename) {
   return 2.00;                     // 100B+
 }
 
-// === Scan recursif pour .gguf ===
+// === Recursive scan for .gguf ===
 function findGgufFiles(roots, maxDepth = 3) {
   const found = [];
   const visited = new Set();
@@ -101,7 +102,7 @@ function standardSearchRoots() {
   ].filter((p, i, arr) => arr.indexOf(p) === i);  // dedup
 }
 
-// === Decode JWT pour extraire walletAddress ===
+// === Decode JWT to extract walletAddress ===
 function decodeJwtAddress(token) {
   try {
     const parts = token.split('.');
@@ -113,13 +114,13 @@ function decodeJwtAddress(token) {
 
 function loadOrCreateConfig() {
   if (fs.existsSync(configPath)) {
-    info(`config.json existant trouve, on va l'enrichir`);
+    info(`Existing config.json found, will enrich it`);
     return JSON.parse(fs.readFileSync(configPath, 'utf8'));
   }
-  // Pas de config existant : on part d'un objet vide (PAS du example
-  // qui contient des modeles bidons C:\models\qwen3...)
+  // No existing config: start from empty object (NOT the example
+  // which contains fake C:\models\qwen3... models)
   return {
-    platformUrl: 'https://backend.chia-offer.com',
+    platformUrl: 'http://localhost:3001',
     localLlamaPort: 8080,
     models: [],
     payoutPreference: 'XCH',
@@ -138,19 +139,19 @@ async function main() {
 
   const config = loadOrCreateConfig();
 
-  // === 1. Detection environnement (silencieuse, juste affichage) ===
-  title('1. Detection automatique');
+  // === 1. Environment detection (silent, display only) ===
+  title('1. Automatic detection');
 
   let gpus;
   try {
     gpus = await detectAllGpus();
     for (const g of gpus) {
-      ok(`GPU #${g.index} : ${c.bold}${g.model}${c.reset} (${g.vramGb} Go)`);
+      ok(`GPU #${g.index}: ${c.bold}${g.model}${c.reset} (${g.vramGb} GB)`);
     }
   } catch (err) {
-    console.log(`  ${c.red}✗${c.reset} Pas de GPU NVIDIA detecte`);
+    console.log(`  ${c.red}✗${c.reset} No NVIDIA GPU detected`);
     console.log(`  ${c.dim}${err.message}${c.reset}`);
-    console.log(`\n  ${c.yellow}Installe les drivers NVIDIA puis relance ce script${c.reset}`);
+    console.log(`\n  ${c.yellow}Install NVIDIA drivers then re-run this script${c.reset}`);
     rl.close();
     process.exit(1);
   }
@@ -158,49 +159,49 @@ async function main() {
   // llama-server
   const llama = await detectLlamaServer(config.llamaCppPath);
   if (llama.ok) {
-    ok(`llama-server : ${llama.path}`);
+    ok(`llama-server: ${llama.path}`);
     config.llamaCppPath = llama.path;
   } else {
-    warn(`llama-server introuvable dans le PATH`);
-    info(`Telecharge llama.cpp avec CUDA : https://github.com/ggerganov/llama.cpp/releases`);
-    info(`Place llama-server.exe quelque part et relance ce script`);
+    warn(`llama-server not found in PATH`);
+    info(`Download llama.cpp with CUDA: https://github.com/ggerganov/llama.cpp/releases`);
+    info(`Place llama-server.exe somewhere and re-run this script`);
 
-    const customPath = await ask(`\n  Ou colle le chemin maintenant (ou Enter pour skip) : `);
+    const customPath = await ask(`\n  Or paste the path now (or Enter to skip): `);
     if (customPath) {
       if (fs.existsSync(customPath)) {
-        ok(`llama-server : ${customPath}`);
+        ok(`llama-server: ${customPath}`);
         config.llamaCppPath = customPath;
       } else {
-        warn(`Fichier introuvable, tu pourras editer config.json plus tard`);
+        warn(`File not found, you can edit config.json later`);
       }
     }
   }
 
-  // cloudflared (OPTIONNEL)
+  // cloudflared (OPTIONAL)
   const cf = await detectCloudflared();
   if (cf.ok) {
-    ok(`cloudflared : ${cf.version.split('\n')[0]} (optionnel, utilise pour debug)`);
+    ok(`cloudflared: ${cf.version.split('\n')[0]} (optional, used for debug)`);
   } else {
-    info(`cloudflared non installe — OK, c'est optionnel`);
-    info(`(le routing client<->agent passe par le WebSocket, pas besoin d'IP publique)`);
+    info(`cloudflared not installed — OK, it's optional`);
+    info(`(client<->agent routing goes through WebSocket, no public IP needed)`);
   }
 
-  // Port libre
+  // Free port
   const port = await findFreePort(8080);
   if (port) {
-    ok(`Port libre detecte : ${port}`);
+    ok(`Free port detected: ${port}`);
     config.localLlamaPort = port;
   } else {
-    warn(`Aucun port libre entre 8080 et 8129`);
+    warn(`No free port between 8080 and 8129`);
     config.localLlamaPort = 8080;
   }
 
-  // === 2. Tes scripts .bat existants (mode recommande) ===
-  title('2. Tes scripts de demarrage (.bat / .sh)');
-  info(`Si tu as deja des .bat qui lancent llama-server avec tes parametres,`);
-  info(`on peut les utiliser directement (le plus simple).`);
+  // === 2. Your existing .bat scripts (recommended mode) ===
+  title('2. Your startup scripts (.bat / .sh)');
+  info(`If you already have .bat files that launch llama-server with your settings,`);
+  info(`we can use them directly (simplest option).`);
 
-  const batDir = await ask(`\n  Dossier contenant tes .bat (Enter pour skip, mode .gguf direct ensuite) : `);
+  const batDir = await ask(`\n  Folder containing your .bat (Enter to skip, direct .gguf mode next): `);
   let chosen = [];
 
   if (batDir) {
@@ -208,21 +209,21 @@ async function main() {
     if (!scan.ok) {
       warn(scan.error);
     } else if (scan.detected.length === 0) {
-      warn(`Aucun .bat avec --model trouve dans ${batDir}`);
+      warn(`No .bat with --model found in ${batDir}`);
     } else {
-      ok(`${scan.detected.length} script(s) detecte(s) :\n`);
+      ok(`${scan.detected.length} script(s) detected:\n`);
       scan.detected.forEach((s, i) => {
         const rate = suggestRate(s.name);
         const ok_marker = s.modelExists ? c.green + '✓' + c.reset : c.yellow + '?' + c.reset;
         console.log(`    [${i}] ${ok_marker} ${c.bold}${s.name}${c.reset}`);
         console.log(`        script : ${s.scriptPath}`);
-        console.log(`        model  : ${s.path}${s.modelExists ? '' : c.yellow + ' (introuvable, mais le .bat saura peut-etre le retrouver)' + c.reset}`);
+        console.log(`        model  : ${s.path}${s.modelExists ? '' : c.yellow + ' (not found, but the .bat may locate it)' + c.reset}`);
         console.log(`        ctx ${s.ctx} · ngl ${s.nGpuLayers}${s.port ? ` · port ${s.port}` : ''}`);
-        console.log(`        tarif suggere ${c.green}$${rate.toFixed(2)}/h${c.reset}`);
+        console.log(`        suggested rate ${c.green}$${rate.toFixed(2)}/h${c.reset}`);
       });
 
       console.log('');
-      const sel = await ask(`  Lesquels louer ? ("all", "0,1,3", Enter pour skip) : `);
+      const sel = await ask(`  Which to rent? ("all", "0,1,3", Enter to skip): `);
       let indices = [];
       if (sel.toLowerCase() === 'all') indices = scan.detected.map((_, i) => i);
       else if (sel) indices = sel.split(',').map(s => parseInt(s.trim())).filter(i => !isNaN(i) && i >= 0 && i < scan.detected.length);
@@ -230,7 +231,7 @@ async function main() {
       for (const i of indices) {
         const s = scan.detected[i];
         const suggested = suggestRate(s.name);
-        const customRate = await ask(`    Tarif $/h pour ${s.name} [${suggested.toFixed(2)}] : `);
+        const customRate = await ask(`    $/h rate for ${s.name} [${suggested.toFixed(2)}]: `);
         chosen.push({
           name: s.name,
           scriptPath: s.scriptPath,
@@ -238,52 +239,52 @@ async function main() {
           rateUsdPerHour: parseFloat(customRate) || suggested,
         });
       }
-      if (chosen.length > 0) ok(`${chosen.length} modele(s) via .bat`);
+      if (chosen.length > 0) ok(`${chosen.length} model(s) via .bat`);
     }
   }
 
-  // === 3. Mode .gguf direct (fallback si pas de .bat) ===
+  // === 3. Direct .gguf mode (fallback if no .bat) ===
   if (chosen.length === 0) {
-    title('3. OU : tes fichiers .gguf direct');
-    info(`On scanne ~/models, C:\\models, Downloads, etc.`);
+    title('3. OR: your .gguf files directly');
+    info(`Scanning ~/models, C:\\models, Downloads, etc.`);
 
   let ggufs = findGgufFiles(standardSearchRoots());
   let chosen = [];
 
-  // Boucle pour ajouter d'autres dossiers a scanner
+  // Loop to add more folders to scan
   while (true) {
     if (ggufs.length === 0) {
-      warn(`Aucun .gguf trouve dans les dossiers actuels`);
+      warn(`No .gguf found in current folders`);
     } else {
-      ok(`${ggufs.length} modele(s) trouve(s) :\n`);
+      ok(`${ggufs.length} model(s) found:\n`);
       ggufs.forEach((g, i) => {
         const name = path.basename(g.path, '.gguf');
         const rate = suggestRate(name);
         console.log(`    [${i}] ${c.bold}${name}${c.reset}`);
         console.log(`        ${g.path}`);
-        console.log(`        ${g.sizeGb} Go · tarif suggere ${c.green}$${rate.toFixed(2)}/h${c.reset}`);
+        console.log(`        ${g.sizeGb} GB · suggested rate ${c.green}$${rate.toFixed(2)}/h${c.reset}`);
       });
     }
 
     console.log('');
-    console.log(`  ${c.bold}Options :${c.reset}`);
-    console.log(`    · Tape ${c.cyan}all${c.reset} pour selectionner tous les modeles`);
-    console.log(`    · Tape ${c.cyan}0,1,3${c.reset} pour selectionner par indice`);
-    console.log(`    · Tape ${c.cyan}+${c.reset} pour scanner un autre dossier`);
-    console.log(`    · Tape ${c.cyan}m${c.reset} pour ajouter un modele manuellement (chemin direct)`);
-    console.log(`    · Enter pour finir`);
-    const sel = (await ask(`\n  Choix : `)).trim();
+    console.log(`  ${c.bold}Options:${c.reset}`);
+    console.log(`    · Type ${c.cyan}all${c.reset} to select all models`);
+    console.log(`    · Type ${c.cyan}0,1,3${c.reset} to select by index`);
+    console.log(`    · Type ${c.cyan}+${c.reset} to scan another folder`);
+    console.log(`    · Type ${c.cyan}m${c.reset} to add a model manually (direct path)`);
+    console.log(`    · Enter to finish`);
+    const sel = (await ask(`\n  Choice: `)).trim();
 
     if (!sel) break;
 
     if (sel === '+') {
-      const newDir = await ask(`  Chemin du dossier a scanner : `);
+      const newDir = await ask(`  Folder path to scan: `);
       if (newDir) {
         const newGgufs = findGgufFiles([newDir], 5);
         if (newGgufs.length === 0) {
-          warn(`Aucun .gguf trouve dans ${newDir}`);
+          warn(`No .gguf found in ${newDir}`);
         } else {
-          ok(`+${newGgufs.length} modele(s) ajoutes a la liste`);
+          ok(`+${newGgufs.length} model(s) added to list`);
           // Dedup
           const knownPaths = new Set(ggufs.map(g => g.path));
           for (const g of newGgufs) {
@@ -295,16 +296,16 @@ async function main() {
     }
 
     if (sel === 'm') {
-      const modelPath = await ask(`  Chemin complet du .gguf : `);
+      const modelPath = await ask(`  Full path to .gguf: `);
       if (!modelPath || !fs.existsSync(modelPath)) {
-        warn(`Fichier introuvable : ${modelPath}`);
+        warn(`File not found: ${modelPath}`);
         continue;
       }
-      const name = (await ask(`  Nom affiche [${path.basename(modelPath, '.gguf')}] : `))
+      const name = (await ask(`  Display name [${path.basename(modelPath, '.gguf')}]: `))
         || path.basename(modelPath, '.gguf');
       const suggested = suggestRate(name);
-      const rate = await ask(`  Tarif $/h [${suggested.toFixed(2)}] : `);
-      const ctx = await ask(`  Contexte [8192] : `);
+      const rate = await ask(`  $/h rate [${suggested.toFixed(2)}]: `);
+      const ctx = await ask(`  Context [8192]: `);
       chosen.push({
         name,
         path: modelPath,
@@ -312,11 +313,11 @@ async function main() {
         nGpuLayers: 99,
         rateUsdPerHour: parseFloat(rate) || suggested,
       });
-      ok(`Ajoute : ${name} a $${(parseFloat(rate) || suggested).toFixed(2)}/h`);
+      ok(`Added: ${name} at $${(parseFloat(rate) || suggested).toFixed(2)}/h`);
       continue;
     }
 
-    // Sinon : selection par indices
+    // Otherwise: selection by indices
     let indices = [];
     if (sel.toLowerCase() === 'all') {
       indices = ggufs.map((_, i) => i);
@@ -325,17 +326,17 @@ async function main() {
     }
 
     if (indices.length === 0) {
-      warn(`Indices invalides`);
+      warn(`Invalid indices`);
       continue;
     }
 
     for (const i of indices) {
       const g = ggufs[i];
       const name = path.basename(g.path, '.gguf');
-      // Skip si deja choisi
+      // Skip if already chosen
       if (chosen.find(m => m.path === g.path)) continue;
       const suggested = suggestRate(name);
-      const customRate = await ask(`    Tarif $/h pour ${name} [${suggested.toFixed(2)}] : `);
+      const customRate = await ask(`    $/h rate for ${name} [${suggested.toFixed(2)}]: `);
       const ctx = name.toLowerCase().includes('32k') ? 32768
         : name.toLowerCase().includes('16k') ? 16384
         : name.toLowerCase().includes('128k') ? 131072
@@ -348,89 +349,90 @@ async function main() {
         rateUsdPerHour: parseFloat(customRate) || suggested,
       });
     }
-    ok(`${chosen.length} modele(s) selectionne(s) au total`);
+    ok(`${chosen.length} model(s) selected in total`);
 
-    const more = await ask(`\n  Ajouter d'autres modeles ? (y/N) : `);
+    const more = await ask(`\n  Add more models? (y/N): `);
     if (more.toLowerCase() !== 'y') break;
   }
 
-  }  // fin du fallback GGUF direct
+  }  // end of direct GGUF fallback
 
   if (chosen.length === 0) {
     console.log('');
-    warn(`Aucun modele selectionne ! L'agent ne pourra rien faire.`);
-    warn(`Tu peux les ajouter plus tard via le dashboard /dashboard.`);
-    const confirm = await ask(`\n  Continuer quand meme avec 0 modele ? (y/N) : `);
+    warn(`No models selected! The agent won't be able to do anything.`);
+    warn(`You can add them later via the dashboard /dashboard.`);
+    const confirm = await ask(`\n  Continue anyway with 0 models? (y/N): `);
     if (confirm.toLowerCase() !== 'y') {
-      console.log('  Setup interrompu. Relance install.bat pour reessayer.');
+      console.log('  Setup interrupted. Re-run install.bat to try again.');
       rl.close();
       process.exit(1);
     }
   }
-  config.models = chosen;  // remplace toujours, jamais d'heritage
+  config.models = chosen;  // always replace, never inherit
 
-  // === 3. Adresse Chia ===
-  title('3. Ton adresse Chia (xch1...)');
-  info(`C'est l'adresse qui recevra tes paiements`);
-  info(`Trouve-la dans Sage Wallet > onglet "Receive"`);
+  // === 3. Chia address ===
+  title('3. Your Chia address (xch1...)');
+  info(`This is the address that will receive your payments`);
+  info(`Find it in Sage Wallet > "Receive" tab`);
 
   let walletAddress = config.chiaWalletAddress;
   while (true) {
-    const a = await ask(`\n  Adresse Chia [${walletAddress || ''}] : `);
+    const a = await ask(`\n  Chia address [${walletAddress || ''}]: `);
     walletAddress = a || walletAddress;
     if (walletAddress?.startsWith('xch1') && walletAddress.length >= 32) break;
-    console.log(`  ${c.red}Adresse invalide${c.reset} (doit commencer par xch1)`);
+    console.log(`  ${c.red}Invalid address${c.reset} (must start with xch1)`);
   }
   config.chiaWalletAddress = walletAddress;
 
-  // === 4. JWT - flow simplifie ===
-  title('4. Authentification (signe une fois dans Sage)');
+  // === 4. JWT - simplified flow ===
+  title('4. Authentication (sign once in Sage)');
 
-  const platformUrl = config.platformUrl || (await ask(`\n  URL du backend [https://backend.chia-offer.com] : `)) || 'https://backend.chia-offer.com';
+  const platformUrl = config.platformUrl || (await ask(`\n  Backend URL [http://localhost:3001]: `)) || 'http://localhost:3001';
   config.platformUrl = platformUrl;
 
   console.log('');
-  console.log(`  ${c.bold}Methode rapide (recommandee) :${c.reset}`);
-  console.log(`  1. Va sur ${c.cyan}https://llm.chia-offer.com/provider/setup${c.reset} dans ton navigateur`);
-  console.log(`  2. Clique ${c.bold}"Connecter Sage"${c.reset} et signe`);
-  console.log(`  3. Une fois connecte, copie le JWT affiche`);
-  console.log(`  4. Colle-le ci-dessous`);
+  console.log(`  ${c.bold}Quick method (recommended):${c.reset}`);
+  console.log(`  1. Go to ${c.cyan}${platformUrl.replace(':3001', ':3000')}${c.reset} in your browser`);
+  console.log(`  2. Click ${c.bold}"Connect Sage"${c.reset} and sign`);
+  console.log(`  3. Once connected, open the console (F12) and type:`);
+  console.log(`     ${c.dim}localStorage.getItem('gpu-rental-jwt')${c.reset}`);
+  console.log(`  4. Copy the token (without quotes) and paste it below`);
   console.log('');
 
   let authToken = '';
   while (!authToken) {
-    authToken = await ask(`  Token JWT : `);
+    authToken = await ask(`  JWT token: `);
     if (!authToken) continue;
-    // Verif token semble valide
+    // Verify token looks valid
     const decoded = decodeJwtAddress(authToken);
     if (!decoded) {
-      console.log(`  ${c.red}Token invalide${c.reset} (pas un JWT decodable)`);
+      console.log(`  ${c.red}Invalid token${c.reset} (not a decodable JWT)`);
       authToken = '';
       continue;
     }
     if (decoded !== walletAddress) {
-      console.log(`  ${c.yellow}⚠ Le token est pour ${decoded} mais tu as donne ${walletAddress}${c.reset}`);
-      const confirm = await ask(`  Continuer quand meme ? (y/N) : `);
+      console.log(`  ${c.yellow}⚠ Token is for ${decoded} but you provided ${walletAddress}${c.reset}`);
+      const confirm = await ask(`  Continue anyway? (y/N): `);
       if (confirm.toLowerCase() !== 'y') { authToken = ''; continue; }
     }
     config.authToken = authToken;
-    ok(`JWT valide`);
+    ok(`Valid JWT`);
   }
 
   // === 5. Payout preference ===
-  title('5. Devise de paiement');
-  const payout = await ask(`\n  Recevoir en XCH ou BYC ? [XCH] : `);
+  title('5. Payout currency');
+  const payout = await ask(`\n  Receive in XCH or BYC? [XCH]: `);
   config.payoutPreference = (payout || 'XCH').toUpperCase();
   if (!['XCH', 'BYC'].includes(config.payoutPreference)) config.payoutPreference = 'XCH';
 
   saveConfig(config);
 
-  // === 6. Benchmark de chaque modele ===
+  // === 6. Benchmark each model ===
   if (chosen.length > 0) {
-    title('6. Benchmark de tes modeles');
-    info('On va lancer chaque .bat un par un pour mesurer tokens/s + cold-start.');
-    info(`Duree estimee : ~1-2 min par modele (chargement VRAM + 1 prompt court).`);
-    const skipBench = await ask(`\n  Skipper le benchmark (deconseille) ? (y/N) : `);
+    title('6. Benchmark your models');
+    info('Each .bat will be launched one at a time to measure tokens/s + cold-start.');
+    info(`Estimated duration: ~1-2 min per model (VRAM load + 1 short prompt).`);
+    const skipBench = await ask(`\n  Skip benchmark (not recommended)? (y/N): `);
 
     if (skipBench.toLowerCase() !== 'y') {
       const VALIDATION_PROMPT = 'Reply with exactly these words and nothing else: GPU rental test ok';
@@ -443,11 +445,11 @@ async function main() {
           const t0 = Date.now();
           await ensureModelLoaded(config, m.name);
           const tLoaded = Date.now();
-          ok(`Modele charge en ${((tLoaded - t0) / 1000).toFixed(1)}s`);
+          ok(`Model loaded in ${((tLoaded - t0) / 1000).toFixed(1)}s`);
 
           const port = getCurrentPort();
 
-          // Etape 1 : warm-up court pour amortir le premier prompt (cache chaud)
+          // Step 1: short warm-up to amortize first prompt (warm cache)
           info(`Warm-up...`);
           try {
             await axios.post(
@@ -461,10 +463,10 @@ async function main() {
               },
               { timeout: 60_000 },
             );
-          } catch (_) { /* warm-up échec OK, on continue */ }
+          } catch (_) { /* warm-up failure OK, continue */ }
 
-          // Etape 2 : mesure tokens/s en regime stable (200 tokens generes)
-          info(`Mesure tokens/s (200 tokens)...`);
+          // Step 2: measure tokens/s at steady state (200 tokens generated)
+          info(`Measuring tokens/s (200 tokens)...`);
           const tMeasure0 = Date.now();
           const resBench = await axios.post(
             `http://127.0.0.1:${port}/v1/chat/completions`,
@@ -472,7 +474,7 @@ async function main() {
               model: m.name,
               messages: [{ role: 'user', content: BENCH_PROMPT }],
               max_tokens: 200,
-              temperature: 0.3,
+              temperature: 0.3,  // a bit of variation to avoid overly short patterns
               stream: false,
             },
             { timeout: 120_000 },
@@ -484,8 +486,8 @@ async function main() {
           const inferenceMs = tMeasure1 - tMeasure0;
           const tokensPerSec = totalTokens / (inferenceMs / 1000);
 
-          // Etape 3 : validation correcte de la reponse (anti-fake-GPU)
-          info(`Test validation...`);
+          // Step 3: correct response validation (anti-fake-GPU)
+          info(`Validation test...`);
           const resValid = await axios.post(
             `http://127.0.0.1:${port}/v1/chat/completions`,
             {
@@ -510,24 +512,24 @@ async function main() {
             passed,
           };
           const status = passed ? c.green + '✓' : c.yellow + '?';
-          ok(`${m.benchmark.tokensPerSec} tok/s sur ${totalTokens} tokens · cold-start ${((tLoaded - t0) / 1000).toFixed(1)}s ${status}${c.reset}`);
+          ok(`${m.benchmark.tokensPerSec} tok/s on ${totalTokens} tokens · cold-start ${((tLoaded - t0) / 1000).toFixed(1)}s ${status}${c.reset}`);
         } catch (err) {
-          warn(`Echec : ${err.message}`);
+          warn(`Failed: ${err.message}`);
           m.benchmark = { passed: false, error: err.message, timestamp: new Date().toISOString() };
         }
       }
 
-      info('\n  Liberation VRAM...');
+      info('\n  Freeing VRAM...');
       await stopLlamaServer();
-      ok('VRAM liberee, benchmarks sauvegardes');
+      ok('VRAM freed, benchmarks saved');
     }
   }
 
   config.models = chosen;
   saveConfig(config);
 
-  // === 7. Register sur le backend ===
-  title('7. Enregistrement sur la plateforme');
+  // === 7. Register on backend ===
+  title('7. Platform registration');
   try {
     const ratePerHourUsd = Math.max(...chosen.map(m => m.rateUsdPerHour || 0), 0.30);
     const { data: registration } = await axios.post(
@@ -535,7 +537,7 @@ async function main() {
       {
         gpuModel: gpus[0].model,
         vramGb: gpus[0].vramGb,
-        availableModels: chosen,  // inclut les benchmarks
+        availableModels: chosen,  // includes benchmarks
         ratePerHourUsd,
         payoutPreference: config.payoutPreference,
         tunnelUrl: null,
@@ -544,54 +546,78 @@ async function main() {
     );
     config.gpuId = registration.gpu.id;
     saveConfig(config);
-    ok(`Enregistre ! GPU ID = ${c.cyan}${registration.gpu.id}${c.reset}`);
-    info(`Status : ${c.yellow}hors-ligne${c.reset} (deviendra "en ligne" quand tu lanceras npm start)`);
+    ok(`Registered! GPU ID = ${c.cyan}${registration.gpu.id}${c.reset}`);
+    info(`Status: ${c.yellow}offline${c.reset} (will become "online" when you run start.bat)`);
   } catch (err) {
-    warn(`Register a echoue : ${err.response?.data?.error || err.message}`);
-    warn('Tu peux relancer npm run setup-auto plus tard, ou ca se fera au 1er npm start.');
+    warn(`Registration failed: ${err.response?.data?.error || err.message}`);
+    warn('You can re-run install.bat later, or registration happens on first start.bat.');
   }
 
-  // === Recap ===
+  // === 8. Solo or pool ===
+  const poolLog = {
+    title,
+    ok,
+    warn,
+    err: (s) => console.log(`  ${c.red}✗${c.reset} ${s}`),
+    info,
+  };
+  await runPoolSetupStep({
+    config,
+    models: chosen,
+    gpuId: config.gpuId,
+    authToken: config.authToken,
+    platformUrl: config.platformUrl,
+    ask,
+    log: poolLog,
+  });
+  saveConfig(config);
+
+  // === Summary ===
   console.log('');
   console.log(`${c.bold}${c.green}╭────────────────────────────────────────────╮${c.reset}`);
-  console.log(`${c.bold}${c.green}│  Setup termine !                           │${c.reset}`);
+  console.log(`${c.bold}${c.green}│  Setup complete!                           │${c.reset}`);
   console.log(`${c.bold}${c.green}╰────────────────────────────────────────────╯${c.reset}`);
   console.log('');
   console.log(`  Wallet         : ${config.chiaWalletAddress}`);
   console.log(`  Backend        : ${config.platformUrl}`);
   console.log(`  Payout         : ${config.payoutPreference}`);
-  console.log(`  GPU            : ${gpus[0].model} (${gpus[0].vramGb} Go)`);
-  console.log(`  llama-server   : ${config.llamaCppPath || c.yellow + 'a configurer dans config.json' + c.reset}`);
-  console.log(`  Modeles (${chosen.length}) :`);
+  console.log(`  GPU            : ${gpus[0].model} (${gpus[0].vramGb} GB)`);
+  console.log(`  llama-server   : ${config.llamaCppPath || c.yellow + 'configure in config.json' + c.reset}`);
+  console.log(`  Models (${chosen.length}):`);
   for (const m of chosen) {
     const benchInfo = m.benchmark?.passed
       ? `${c.green}${m.benchmark.tokensPerSec} tok/s ✓${c.reset}`
       : m.benchmark
-        ? `${c.yellow}bench KO${c.reset}`
-        : `${c.dim}pas benchmarke${c.reset}`;
+        ? `${c.yellow}bench failed${c.reset}`
+        : `${c.dim}not benchmarked${c.reset}`;
     console.log(`    · ${m.name.padEnd(35)} ${c.green}$${m.rateUsdPerHour.toFixed(2)}/h${c.reset} · ${benchInfo}`);
   }
   console.log('');
-  console.log(`  Config sauvegardee : ${c.dim}${configPath}${c.reset}`);
+  console.log(`  Config saved: ${c.dim}${configPath}${c.reset}`);
   if (config.gpuId) {
-    console.log(`  GPU enregistre, ID : ${c.cyan}${config.gpuId}${c.reset}`);
-    console.log(`  Status actuel      : ${c.yellow}hors-ligne${c.reset}`);
+    console.log(`  GPU registered, ID: ${c.cyan}${config.gpuId}${c.reset}`);
+    console.log(`  Status             : ${c.yellow}offline${c.reset}`);
+  }
+  if (config.poolMembership) {
+    console.log(`  Pool               : ${c.cyan}#${config.poolMembership.poolNumber}${c.reset} (SHA256 verified)`);
+  } else {
+    console.log(`  Serving mode       : ${c.cyan}solo${c.reset}`);
   }
   console.log('');
-  step(`Pour activer ton GPU sur le site : ${c.cyan}npm start${c.reset}`);
-  step(`Pour le mettre hors-ligne : Ctrl+C`);
+  step(`To activate your GPU on the site: double-click ${c.cyan}start.bat${c.reset}`);
+  step(`To take it offline: Ctrl+C in the start.bat window`);
   console.log('');
-  step(`Pour modifier ta config plus tard :`);
-  console.log(`  · Rapide : edite ${c.cyan}config.json${c.reset} (notepad ou nano)`);
-  console.log(`  · Visuel : va sur ${c.cyan}https://llm.chia-offer.com/dashboard${c.reset} et clique "Modifier"`);
-  console.log(`  · Refaire ce wizard : ${c.cyan}npm run setup-auto${c.reset}`);
+  step(`To edit your config later:`);
+  console.log(`  · Quick: edit ${c.cyan}config.json${c.reset} (notepad)`);
+  console.log(`  · Visual: go to ${c.cyan}${platformUrl.replace(':3001', ':3000')}/dashboard${c.reset} and click "Edit" on your GPU`);
+  console.log(`  · Re-run this wizard: ${c.cyan}npm run setup-auto${c.reset}`);
   console.log('');
 
   rl.close();
 }
 
 main().catch(err => {
-  console.error(`\n${c.red}Erreur fatale :${c.reset}`, err.response?.data || err.message);
+  console.error(`\n${c.red}Fatal error:${c.reset}`, err.response?.data || err.message);
   rl.close();
   process.exit(1);
 });

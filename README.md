@@ -1,60 +1,58 @@
 # Chia LLM Rental — Provider Agent
 
-Agent Node.js à installer sur ta machine GPU pour la proposer à la location sur [llm.chia-offer.com](https://llm.chia-offer.com).
+Node.js agent to run on your GPU machine and list it for rent on [llm.chia-offer.com](https://llm.chia-offer.com).
 
-L'agent :
-- se connecte à la plateforme via WebSocket
-- charge les modèles GGUF à la demande avec llama.cpp
-- mesure et rapporte tokens/s
-- libère la VRAM automatiquement entre les sessions
+The agent:
+- connects to the platform via WebSocket
+- loads GGUF models on demand with llama.cpp
+- measures and reports tokens/s
+- frees VRAM automatically between sessions
 
 ---
 
-## Déploiement rapide (Docker — recommandé)
+## Quick deploy (Docker — recommended)
 
-> Prérequis : Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-
-
+> Prerequisites: Docker + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
 ```bash
-# 0. One time configure NVIDIA Container Toolkit (Linux)
+# 0. One-time NVIDIA Container Toolkit setup (Linux)
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 
-# 1. Copie et remplis la config
+# 1. Copy and fill in config
 cp config.example.json config.json
-nano config.json          # colle ton JWT + ajuste les chemins de modèles
+nano config.json          # paste your JWT + adjust model paths
 
-# 2. Place tes fichiers .gguf dans ./models/
+# 2. Put your .gguf files in ./models/
 mkdir -p models
 
-# 3. Lance
+# 3. Run
 
 # pass a specific architecture to speed up the build
-# "80;86;89,100" (A100, 3090, 4090, 5090) 
+# "80;86;89,100" (A100, 3090, 4090, 5090)
 docker compose build --build-arg CUDA_ARCHITECTURES="86"
 docker compose up -d
 
-# 4. Suis les logs
+# 4. Follow logs
 docker compose logs -f
 ```
 
 ---
 
-## Déploiement sans Docker (bare metal)
+## Deploy without Docker (bare metal)
 
-> Prérequis : Node.js 18+, llama.cpp compilé avec CUDA ([releases](https://github.com/ggerganov/llama.cpp/releases))
+> Prerequisites: Node.js 20+, llama.cpp built with CUDA ([releases](https://github.com/ggerganov/llama.cpp/releases))
 
 ```bash
 npm install
 
-# Setup assisté (recommandé — détecte GPU, .gguf, obtient le JWT)
+# Assisted setup (recommended — detects GPU, .gguf, obtains JWT)
 npm run setup-auto
 
-# OU wizard complet (benchmark inclus)
+# OR full wizard (benchmark included)
 npm run wizard
 
-# Lance l'agent
+# Start the agent
 npm start
 ```
 
@@ -62,61 +60,64 @@ npm start
 
 ## Configuration (`config.json`)
 
-Voir `config.example.json` pour tous les champs. Les essentiels :
+See `config.example.json` for all fields. Essentials:
 
-| Champ | Description |
+| Field | Description |
 |---|---|
-| `platformUrl` | URL du backend (`https://backend.chia-offer.com`) |
-| `authToken` | JWT obtenu sur [llm.chia-offer.com/provider/setup](https://llm.chia-offer.com/provider/setup) |
-| `llamaCppPath` | Chemin vers le binaire `llama-server` (bare metal uniquement) |
-| `models` | Liste des modèles à proposer (nom + chemin GGUF + ctx + tarif) |
-| `chiaWalletAddress` | Adresse `xch1…` qui reçoit les paiements |
-| `payoutPreference` | `XCH` ou `BYC` |
-| `idleUnloadSeconds` | Secondes avant de décharger le modèle de la VRAM après inactivité (0 = jamais) |
+| `platformUrl` | Backend URL (`https://backend.chia-offer.com`) |
+| `authToken` | JWT from [llm.chia-offer.com/provider/setup](https://llm.chia-offer.com/provider/setup) |
+| `llamaCppPath` | Path to `llama-server` binary (bare metal only) |
+| `models` | Models to offer (name + GGUF path + ctx + rate) |
+| `chiaWalletAddress` | `xch1…` address that receives payouts |
+| `payoutPreference` | `XCH` or `BYC` |
+| `idleUnloadSeconds` | Seconds before unloading the model from VRAM after idle (0 = never) |
+| `servingMode` | `solo` (direct rental) or pool via `poolMembership` |
+| `poolMembership` | `null` or `{ "poolNumber", "modelSha256", … }` to join a pool |
 
 ---
 
-## Scripts npm
+## npm scripts
 
-| Commande | Action |
+| Command | Action |
 |---|---|
-| `npm start` | Lance l'agent (production) |
-| `npm run dev` | Lance avec rechargement auto |
-| `npm run setup-auto` | Setup rapide Windows-friendly |
-| `npm run wizard` | Setup interactif complet avec benchmark |
-| `npm run setup` | Setup minimal (auth wallet seulement) |
-| `npm run mock` | Agent factice pour tester sans GPU |
+| `npm start` | Run the agent (production) |
+| `npm run dev` | Run with auto-reload |
+| `npm run setup-auto` | Quick Windows-friendly setup |
+| `npm run wizard` | Full interactive setup with benchmark |
+| `npm run setup` | Minimal setup (wallet auth only) |
+| `npm run mock` | Fake agent for testing without a GPU |
 
 ---
 
-## Structure du projet
+## Models: lazy loading + swap
+
+The agent **does not load any model at boot**. On the first `session-start`, it starts `llama-server` with the requested model. Switching models triggers a swap (~30 s): only one model in VRAM at a time. Add multiple entries in `config.models[]` for the catalog.
+
+## Project structure
 
 ```
 ├── src/
-│   ├── index.js          # Point d'entrée de l'agent
-│   ├── auth.js           # JWT + client HTTP authentifié
-│   ├── detect.js         # Détection cloudflared, ports, scripts .bat
-│   ├── gpu-monitor.js    # Détection GPU via nvidia-smi
-│   ├── llama-manager.js  # Gestion llama-server (lazy load, swap)
-│   ├── session-tracker.js # Proxy WebSocket sessions LLM
-│   ├── tunnel.js         # Tunnel Cloudflare optionnel
-│   ├── pricing.js        # Calcul de tarifs
-│   ├── setup.js          # Setup auth wallet
-│   ├── auto-setup.js     # Setup automatique
-│   ├── wizard.js         # Wizard interactif complet
-│   └── mock.js           # Agent factice (tests)
-├── config.example.json   # Exemple de configuration
+│   ├── index.js           # Entry point
+│   ├── pool-setup.js      # Pool membership (GGUF hash)
+│   ├── gguf-hash.js       # SHA256 of model files
+│   ├── llama-manager.js   # llama-server (lazy load, swap)
+│   ├── session-tracker.js # WebSocket session proxy
+│   └── …                  # auth, detect, wizard, mock, etc.
+├── config.example.json    # Example (Docker: /app/… paths)
+├── install.bat            # One-click Windows setup
 ├── Dockerfile
 ├── docker-compose.yml
-└── models/               # Tes fichiers .gguf (non versionné)
+└── models/                # .gguf files (not versioned)
 ```
+
+Quick Windows guide: `QUICKSTART.md`.
 
 ---
 
-## Obtenir le JWT
+## Get a JWT
 
-1. Va sur [llm.chia-offer.com/provider/setup](https://llm.chia-offer.com/provider/setup)
-2. Connecte ton wallet Sage et signe
-3. Copie le JWT affiché et colle-le dans `config.json` sous `authToken`
+1. Go to [llm.chia-offer.com/provider/setup](https://llm.chia-offer.com/provider/setup)
+2. Connect your Sage wallet and sign
+3. Copy the JWT shown and paste it into `config.json` as `authToken`
 
-Le token est valide 7 jours — renouvelle-le avant expiration.
+The token is valid for 7 days — renew it before it expires.

@@ -1,11 +1,11 @@
-// provider-agent/src/auth.js
-// Lecture du JWT depuis la config et construction d'un client HTTP authentifie.
+// src/auth.js
+// Read JWT from config and build an authenticated HTTP client.
 //
-// Le JWT est obtenu manuellement par le fournisseur (cf README.md) :
+// The JWT is obtained manually by the provider (see README.md):
 //   1. POST /api/auth/challenge { walletAddress }
-//   2. Le wallet du fournisseur signe le challenge (Goby, chia CLI, etc.)
+//   2. The provider's wallet signs the challenge (Goby, chia CLI, etc.)
 //   3. POST /api/auth/verify { walletAddress, pubkey, signature } -> { token }
-//   4. Coller le token dans config.json sous `authToken`
+//   4. Paste the token in config.json under `authToken`
 
 import axios from 'axios';
 
@@ -23,14 +23,14 @@ function decodeJwtPayload(token) {
 export function createAuthClient(config) {
   if (!config.authToken) {
     throw new Error(
-      'authToken manquant dans config.json — fais le flow /api/auth/challenge + /api/auth/verify ' +
-      'puis colle le JWT obtenu (cf README.md)'
+      'authToken missing in config.json — complete the /api/auth/challenge + /api/auth/verify flow ' +
+      'then paste the JWT obtained (see README.md)'
     );
   }
 
   const payload = decodeJwtPayload(config.authToken);
   if (payload?.exp && payload.exp * 1000 < Date.now()) {
-    throw new Error('authToken expire — refais le flow d\'auth et mets a jour config.json');
+    throw new Error('authToken expired — redo the auth flow and update config.json');
   }
 
   const client = axios.create({

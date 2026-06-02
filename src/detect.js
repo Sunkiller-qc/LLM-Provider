@@ -1,6 +1,6 @@
-// provider-agent/src/detect.js
-// Helpers de detection auto pour le wizard : scan .bat, test port, check
-// cloudflared, etc. Tout est best-effort, retourne null en cas d'echec.
+// src/detect.js
+// Auto-detection helpers for the wizard: scan .bat, test port, check
+// cloudflared, etc. All best-effort, returns null on failure.
 
 import fs from 'fs';
 import path from 'path';
@@ -11,7 +11,7 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 
 /**
- * Tente de detecter cloudflared dans le PATH.
+ * Try to detect cloudflared in PATH.
  */
 export async function detectCloudflared() {
   try {
@@ -19,12 +19,12 @@ export async function detectCloudflared() {
     const version = stdout.split('\n')[0].trim();
     return { ok: true, version };
   } catch (err) {
-    return { ok: false, error: 'cloudflared introuvable dans le PATH' };
+    return { ok: false, error: 'cloudflared not found in PATH' };
   }
 }
 
 /**
- * Verifie qu'un port TCP local est libre.
+ * Check that a local TCP port is free.
  */
 export function isPortFree(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
@@ -38,7 +38,7 @@ export function isPortFree(port, host = '127.0.0.1') {
 }
 
 /**
- * Trouve le 1er port libre dans la plage [start, start+50].
+ * Find the first free port in range [start, start+50].
  */
 export async function findFreePort(start = 8080) {
   for (let p = start; p < start + 50; p++) {
@@ -48,18 +48,18 @@ export async function findFreePort(start = 8080) {
 }
 
 /**
- * Scan un dossier pour les .bat / .sh et tente de parser les commandes
- * llama-server pour extraire { model_path, ctx_size, n_gpu_layers, port }.
+ * Scan a folder for .bat / .sh and try to parse llama-server commands
+ * to extract { model_path, ctx_size, n_gpu_layers, port }.
  *
- * Pas de pattern strict : on regarde les flags --model, --ctx-size,
- * --n-gpu-layers, --port. Le nom du modele = nom du fichier sans extension.
+ * No strict pattern: we look for --model, --ctx-size,
+ * --n-gpu-layers, --port flags. Model name = filename without extension.
  */
 export function scanLaunchScripts(folder) {
   if (!fs.existsSync(folder)) {
-    return { ok: false, error: `Dossier introuvable : ${folder}` };
+    return { ok: false, error: `Folder not found: ${folder}` };
   }
   if (!fs.statSync(folder).isDirectory()) {
-    return { ok: false, error: `Pas un dossier : ${folder}` };
+    return { ok: false, error: `Not a folder: ${folder}` };
   }
 
   const entries = fs.readdirSync(folder);
@@ -75,7 +75,7 @@ export function scanLaunchScripts(folder) {
 
     const model = extractFlag(content, ['--model', '-m']);
     if (!model) {
-      warnings.push(`${file} : pas de --model trouve`);
+      warnings.push(`${file}: no --model found`);
       continue;
     }
     const ctx = parseInt(extractFlag(content, ['--ctx-size', '--ctx', '-c'])) || 4096;
@@ -117,20 +117,20 @@ function escapeRegex(s) {
 }
 
 /**
- * Verifie qu'un fichier GGUF semble valide (existe + taille raisonnable).
+ * Check that a GGUF file looks valid (exists + reasonable size).
  */
 export function validateModelFile(modelPath) {
-  if (!fs.existsSync(modelPath)) return { ok: false, error: 'Fichier introuvable' };
+  if (!fs.existsSync(modelPath)) return { ok: false, error: 'File not found' };
   const stat = fs.statSync(modelPath);
-  if (!stat.isFile()) return { ok: false, error: 'Pas un fichier' };
+  if (!stat.isFile()) return { ok: false, error: 'Not a file' };
   const sizeGb = stat.size / (1024 ** 3);
-  if (sizeGb < 0.1) return { ok: false, error: `Trop petit (${sizeGb.toFixed(2)} Go), probablement pas un GGUF` };
-  if (sizeGb > 500) return { ok: false, error: `Trop gros (${sizeGb.toFixed(2)} Go)` };
+  if (sizeGb < 0.1) return { ok: false, error: `Too small (${sizeGb.toFixed(2)} GB), probably not a GGUF` };
+  if (sizeGb > 500) return { ok: false, error: `Too large (${sizeGb.toFixed(2)} GB)` };
   return { ok: true, sizeGb: parseFloat(sizeGb.toFixed(2)) };
 }
 
 /**
- * Tente de detecter llama-server via 'which' / 'where' / 'whereis'.
+ * Try to detect llama-server via 'which' / 'where' / 'whereis'.
  */
 export async function detectLlamaServer(hintPath) {
   if (hintPath && fs.existsSync(hintPath)) {
@@ -144,5 +144,5 @@ export async function detectLlamaServer(hintPath) {
     const found = stdout.trim().split('\n')[0].trim();
     if (found && fs.existsSync(found)) return { ok: true, path: found };
   } catch (_) {}
-  return { ok: false, error: `${binName} introuvable dans le PATH` };
+  return { ok: false, error: `${binName} not found in PATH` };
 }

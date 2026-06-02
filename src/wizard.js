@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// provider-agent/src/wizard.js
-// Setup interactif complet : detection GPU, scan dossier .bat, test ports,
-// pre-benchmark, auth wallet, register backend.
+// src/wizard.js
+// Full interactive setup: GPU detection, .bat folder scan, port tests,
+// pre-benchmark, wallet auth, backend register.
 //
-// Usage : npm run wizard
+// Usage: npm run wizard
 
 import 'dotenv/config';
 import fs from 'fs';
@@ -22,6 +22,7 @@ import {
 } from './detect.js';
 import { ensureModelLoaded, stopLlamaServer } from './llama-manager.js';
 import { printRateHints } from './pricing.js';
+import { runPoolSetupStep } from './pool-setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -60,18 +61,18 @@ async function promptRateForModel(question, tokensPerSec) {
   return Number.isFinite(n) && n >= 0 ? n : 0.4;
 }
 
-/** Ajuste les tarifs après mesure tok/s */
+/** Adjust rates after tok/s measurement */
 async function stepAdjustRates(models) {
   const withBench = models.filter(m => m._bench?.tokensPerSec);
   if (withBench.length === 0) return models;
 
-  log.title('6b. Tarifs (selon benchmark)');
-  console.log('Ajuste tes prix $/h si besoin (équivalent $/M tokens).\n');
+  log.title('6b. Rates (based on benchmark)');
+  console.log('Adjust your $/h prices if needed (equivalent $/M tokens).\n');
 
   for (const m of withBench) {
     printRateHints(m._bench.tokensPerSec, log);
     const raw = await prompt(
-      `  ${m.name} — tarif USD/h [${(m.rateUsdPerHour ?? 0.4).toFixed(2)}] : `,
+      `  ${m.name} — USD/h rate [${(m.rateUsdPerHour ?? 0.4).toFixed(2)}]: `,
     );
     if (raw) {
       const n = parseFloat(raw);
@@ -81,79 +82,79 @@ async function stepAdjustRates(models) {
   return models;
 }
 
-// --- Etape 1 : detection environnement ---
+// --- Step 1: environment detection ---
 async function stepEnvironment() {
-  log.title('1. Detection de ton environnement');
+  log.title('1. Detecting your environment');
 
   // GPUs
   let gpus;
   try {
     gpus = await detectAllGpus();
     for (const g of gpus) {
-      log.ok(`GPU #${g.index} : ${c.bold}${g.model}${c.reset} (${g.vramGb} Go VRAM)`);
+      log.ok(`GPU #${g.index}: ${c.bold}${g.model}${c.reset} (${g.vramGb} GB VRAM)`);
     }
   } catch (err) {
     log.err(err.message);
-    log.info('Verifie que les drivers NVIDIA sont installes (nvidia-smi)');
+    log.info('Verify that NVIDIA drivers are installed (nvidia-smi)');
     process.exit(1);
   }
 
   // llama-server
   const llama = await detectLlamaServer();
-  if (llama.ok) log.ok(`llama-server : ${llama.path}`);
-  else log.warn(`llama-server : ${llama.error} (on te demande le chemin plus tard)`);
+  if (llama.ok) log.ok(`llama-server: ${llama.path}`);
+  else log.warn(`llama-server: ${llama.error} (you will be asked for the path later)`);
 
   // cloudflared
   const cf = await detectCloudflared();
-  if (cf.ok) log.ok(`cloudflared : ${cf.version}`);
-  else log.warn(`cloudflared : ${cf.error}`);
+  if (cf.ok) log.ok(`cloudflared: ${cf.version}`);
+  else log.warn(`cloudflared: ${cf.error}`);
 
-  // port libre
+  // free port
   const port = await findFreePort(8080);
-  if (port) log.ok(`Port libre detecte : ${port}`);
-  else log.warn('Aucun port libre dans 8080-8129');
+  if (port) log.ok(`Free port detected: ${port}`);
+  else log.warn('No free port in 8080-8129');
 
   return { gpus, llama, cloudflared: cf, port };
 }
 
-// --- Etape 2 : choix du GPU si plusieurs ---
+// --- Step 2: choose GPU if multiple ---
 async function stepChooseGpu(gpus) {
   if (gpus.length === 1) return gpus[0];
-  log.title(`2. Tu as ${gpus.length} GPUs detectes`);
+  log.title(`2. You have ${gpus.length} GPUs detected`);
   for (const g of gpus) {
-    console.log(`  [${g.index}] ${g.model} ${g.vramGb} Go`);
+    console.log(`  [${g.index}] ${g.model} ${g.vramGb} GB`);
   }
-  const idx = await prompt(`Quel GPU louer ? (index, defaut 0) : `);
+  const idx = await prompt(`Which GPU to rent? (index, default 0): `);
   const chosen = gpus[parseInt(idx) || 0] || gpus[0];
-  log.ok(`Choisi : GPU #${chosen.index} ${chosen.model}`);
+  log.ok(`Chosen: GPU #${chosen.index} ${chosen.model}`);
   return chosen;
 }
 
-// --- Etape 3 : llama-server path ---
+// --- Step 3: llama-server path ---
 async function stepLlamaPath(llama, existingPath) {
-  log.title('3. Chemin vers llama-server');
+  log.title('3. Path to llama-server');
   let p = llama.ok ? llama.path : existingPath;
   if (p) {
-    const accept = await prompt(`Detecte : ${p}\nOK ? (Y/n) : `);
+    const accept = await prompt(`Detected: ${p}\nOK? (Y/n): `);
     if (accept.toLowerCase() !== 'n') return p;
   }
   while (true) {
-    p = await prompt('Chemin complet vers llama-server (.exe sur Windows) : ');
+    p = await prompt('Full path to llama-server (.exe on Windows): ');
     if (fs.existsSync(p)) {
-      log.ok(`Trouve : ${p}`);
+      log.ok(`Found: ${p}`);
       return p;
     }
-    log.err('Fichier introuvable, reessaye');
+    log.err('File not found, try again');
   }
 }
 
-// --- Etape 4 : decouverte des modeles ---
+// --- Step 4: model discovery ---
 async function stepModels(existingModels = []) {
-  log.title('4. Tes modeles');
-  console.log('Tu as 2 options :');
-  console.log(`  [a] ${c.bold}Scanner un dossier de .bat${c.reset} (rapide si tu as deja des launchers)`);
-  console.log(`  [b] ${c.bold}Ajouter manuellement${c.reset} (path GGUF + nom)\n`);
-  const choice = await prompt('Choix (a/b, defaut a) : ');
+  log.title('4. Your models');
+  console.log('You have 2 options:');
+  console.log(`  [a] ${c.bold}Scan a folder of .bat${c.reset} (fast if you already have launchers)`);
+  console.log(`  [b] ${c.bold}Add manually${c.reset} (GGUF path + name)\n`);
+  const choice = await prompt('Choice (a/b, default a): ');
 
   if (choice.toLowerCase() === 'b') {
     return stepModelsManual(existingModels);
@@ -162,16 +163,16 @@ async function stepModels(existingModels = []) {
 }
 
 async function stepModelsScan(existingModels) {
-  const folder = await prompt('Dossier contenant tes .bat/.sh : ');
+  const folder = await prompt('Folder containing your .bat/.sh: ');
   const scan = scanLaunchScripts(folder);
   if (!scan.ok) {
     log.err(scan.error);
     return stepModels(existingModels);
   }
-  log.info(`${scan.scripts} script(s) trouve(s) dans ${folder}`);
+  log.info(`${scan.scripts} script(s) found in ${folder}`);
   for (const w of scan.warnings) log.warn(w);
   if (scan.detected.length === 0) {
-    log.warn('Aucun modele detecte (pas de --model dans les scripts)');
+    log.warn('No models detected (no --model in scripts)');
     return stepModelsManual(existingModels);
   }
 
@@ -184,10 +185,10 @@ async function stepModelsScan(existingModels) {
       continue;
     }
     console.log(`  ${c.bold}${m.name}${c.reset}`);
-    console.log(`    path  : ${m.path} (${validation.sizeGb} Go)`);
+    console.log(`    path  : ${m.path} (${validation.sizeGb} GB)`);
     console.log(`    ctx   : ${m.ctx} · ngl : ${m.nGpuLayers}`);
 
-    const rate = await promptRateForModel(`    Tarif USD/h pour ce modele [0.40] : `, null);
+    const rate = await promptRateForModel(`    USD/h rate for this model [0.40]: `, null);
     accepted.push({
       name: m.name,
       path: m.path,
@@ -195,7 +196,7 @@ async function stepModelsScan(existingModels) {
       nGpuLayers: m.nGpuLayers,
       rateUsdPerHour: rate,
     });
-    log.ok(`Ajoute : ${m.name} a $${(parseFloat(rate) || 0.40).toFixed(2)}/h`);
+    log.ok(`Added: ${m.name} at $${(parseFloat(rate) || 0.40).toFixed(2)}/h`);
   }
   return accepted;
 }
@@ -205,22 +206,22 @@ async function stepModelsManual(existingModels) {
   while (true) {
     console.log('');
     if (models.length > 0) {
-      log.info(`${models.length} modele(s) deja ajoute(s) : ${models.map(m => m.name).join(', ')}`);
+      log.info(`${models.length} model(s) already added: ${models.map(m => m.name).join(', ')}`);
     }
-    const add = await prompt('Ajouter un modele ? (Y/n) : ');
+    const add = await prompt('Add a model? (Y/n): ');
     if (add.toLowerCase() === 'n') break;
 
-    const modelPath = await prompt('  Chemin du fichier GGUF : ');
+    const modelPath = await prompt('  GGUF file path: ');
     const validation = validateModelFile(modelPath);
     if (!validation.ok) {
       log.err(validation.error);
       continue;
     }
-    const name = await prompt(`  Nom affiche [${path.basename(modelPath, '.gguf')}] : `)
+    const name = await prompt(`  Display name [${path.basename(modelPath, '.gguf')}]: `)
       || path.basename(modelPath, '.gguf');
-    const ctx = await prompt('  Taille contexte [8192] : ');
-    const ngl = await prompt('  N gpu layers [99] : ');
-    const rate = await promptRateForModel('  Tarif USD/h [0.40] : ', null);
+    const ctx = await prompt('  Context size [8192]: ');
+    const ngl = await prompt('  N gpu layers [99]: ');
+    const rate = await promptRateForModel('  USD/h rate [0.40]: ', null);
 
     models.push({
       name,
@@ -229,81 +230,81 @@ async function stepModelsManual(existingModels) {
       nGpuLayers: parseInt(ngl) || 99,
       rateUsdPerHour: rate,
     });
-    log.ok(`${name} (${validation.sizeGb} Go) a $${parseFloat(rate || 0.40).toFixed(2)}/h`);
+    log.ok(`${name} (${validation.sizeGb} GB) at $${parseFloat(rate || 0.40).toFixed(2)}/h`);
   }
   return models;
 }
 
-// --- Etape 5 : auth wallet ---
+// --- Step 5: wallet auth ---
 async function stepAuth(config) {
-  log.title('5. Authentification wallet Chia');
+  log.title('5. Chia wallet authentication');
 
-  const platformUrl = (await prompt(`Backend URL [${config.platformUrl || 'https://backend.chia-offer.com'}] : `))
-    || config.platformUrl || 'https://backend.chia-offer.com';
+  const platformUrl = (await prompt(`Backend URL [${config.platformUrl || 'http://localhost:3001'}]: `))
+    || config.platformUrl || 'http://localhost:3001';
   config.platformUrl = platformUrl;
 
   if (config.authToken) {
     try {
       const payload = JSON.parse(Buffer.from(config.authToken.split('.')[1], 'base64url').toString('utf8'));
       if (payload?.exp && payload.exp * 1000 > Date.now()) {
-        const reuse = await prompt(`Token deja present (wallet ${payload.walletAddress}). Reutiliser ? (Y/n) : `);
+        const reuse = await prompt(`Token already present (wallet ${payload.walletAddress}). Reuse? (Y/n): `);
         if (reuse.toLowerCase() !== 'n') {
-          log.ok('Token existant valide');
+          log.ok('Existing token valid');
           return config;
         }
       }
     } catch (_) {}
   }
 
-  const walletAddress = (await prompt(`Ton adresse Chia (xch1...) [${config.chiaWalletAddress || ''}] : `))
+  const walletAddress = (await prompt(`Your Chia address (xch1...) [${config.chiaWalletAddress || ''}]: `))
     || config.chiaWalletAddress;
   if (!walletAddress || !walletAddress.startsWith('xch1')) {
-    log.err('Adresse invalide');
+    log.err('Invalid address');
     process.exit(1);
   }
   config.chiaWalletAddress = walletAddress;
 
-  log.info('Demande du challenge...');
+  log.info('Requesting challenge...');
   let challenge;
   try {
     const { data } = await axios.post(`${platformUrl}/api/auth/challenge`, { walletAddress });
     challenge = data.challenge;
-    log.ok(`Challenge recu (expire dans ${Math.round(data.ttlMs / 60000)} min)`);
+    log.ok(`Challenge received (expires in ${Math.round(data.ttlMs / 60000)} min)`);
   } catch (err) {
-    log.err(`Auth challenge : ${err.response?.data?.error || err.message}`);
+    log.err(`Auth challenge: ${err.response?.data?.error || err.message}`);
     process.exit(1);
   }
 
-  console.log('\n  Signe ce challenge avec ton wallet Sage / chia CLI :');
+  console.log('\n  Sign this challenge with your Sage / chia CLI wallet:');
   console.log(`  ${c.cyan}${challenge}${c.reset}\n`);
-  console.log('  Sage : ouvre la console (Ctrl+Shift+I) ou utilise la page /provider/setup');
-  console.log('  Chia CLI : chia keys sign --message <ci-dessus> ...\n');
+  console.log('  Sage: open the console (Ctrl+Shift+I) or use the /provider/setup page');
+  console.log('  Chia CLI: chia keys sign --message <above> ...\n');
 
-  const pubkey = await prompt('  Pubkey (hex 48 bytes = 96 chars) : ');
-  const signature = await prompt('  Signature (hex 96 bytes = 192 chars) : ');
+  const pubkey = await prompt('  Pubkey (hex 48 bytes = 96 chars): ');
+  const signature = await prompt('  Signature (hex 96 bytes = 192 chars): ');
 
-  log.info('Verification...');
+  log.info('Verifying...');
   try {
     const { data } = await axios.post(`${platformUrl}/api/auth/verify`, {
       walletAddress, pubkey, signature, scheme: 'chip-0002',
     });
     config.authToken = data.token;
-    log.ok(`JWT recu pour ${data.user.walletAddress}`);
+    log.ok(`JWT received for ${data.user.walletAddress}`);
   } catch (err) {
-    log.err(`Verify : ${err.response?.data?.error || err.message}`);
+    log.err(`Verify: ${err.response?.data?.error || err.message}`);
     process.exit(1);
   }
   return config;
 }
 
-// --- Etape 6 : pre-benchmark de chaque modele ---
+// --- Step 6: pre-benchmark each model ---
 async function stepBenchmark(config, models) {
-  log.title('6. Pre-benchmark (mesure tokens/s)');
-  console.log('On charge chaque modele 1 fois pour mesurer son debut et son debit.\n');
+  log.title('6. Pre-benchmark (measure tokens/s)');
+  console.log('Each model will be loaded once to measure startup and throughput.\n');
 
-  const skip = await prompt('Skipper le pre-benchmark (plus rapide) ? (y/N) : ');
+  const skip = await prompt('Skip pre-benchmark (faster)? (y/N): ');
   if (skip.toLowerCase() === 'y') {
-    log.info('Skipped — le backend lancera un benchmark complet au register');
+    log.info('Skipped — backend will run a full benchmark on register');
     return models;
   }
 
@@ -332,11 +333,11 @@ async function stepBenchmark(config, models) {
       const tokens = res.data?.usage?.completion_tokens || text.split(/\s+/).length;
       const loadMs = tLoaded - t0;
       const tokensPerSec = tokens / ((tDone - tLoaded) / 1000);
-      log.ok(`Charge : ${(loadMs / 1000).toFixed(1)}s · Debit : ${tokensPerSec.toFixed(1)} tok/s`);
+      log.ok(`Load: ${(loadMs / 1000).toFixed(1)}s · Throughput: ${tokensPerSec.toFixed(1)} tok/s`);
       benchmarked.push({ ...m, _bench: { loadMs, tokensPerSec: parseFloat(tokensPerSec.toFixed(1)) } });
     } catch (err) {
-      log.err(`Echec : ${err.message}`);
-      const keep = await prompt('  Conserver quand meme ce modele ? (y/N) : ');
+      log.err(`Failed: ${err.message}`);
+      const keep = await prompt('  Keep this model anyway? (y/N): ');
       if (keep.toLowerCase() === 'y') benchmarked.push(m);
     }
   }
@@ -344,15 +345,15 @@ async function stepBenchmark(config, models) {
   return benchmarked;
 }
 
-// --- Etape 7 : recap et register ---
+// --- Step 7: recap and register ---
 async function stepRegister(config, models, gpu) {
-  log.title('7. Recap + enregistrement');
+  log.title('7. Recap + registration');
 
   console.log(`  Wallet         : ${config.chiaWalletAddress}`);
-  console.log(`  GPU            : ${gpu.model} (${gpu.vramGb} Go)`);
+  console.log(`  GPU            : ${gpu.model} (${gpu.vramGb} GB)`);
   console.log(`  Backend        : ${config.platformUrl}`);
   console.log(`  Payout         : ${config.payoutPreference || 'XCH'}`);
-  console.log(`  Modeles (${models.length}) :`);
+  console.log(`  Models (${models.length}):`);
   for (const m of models) {
     let line = `    · ${m.name.padEnd(30)} $${m.rateUsdPerHour.toFixed(2)}/h`;
     if (m._bench) line += ` (${m._bench.tokensPerSec} tok/s)`;
@@ -360,9 +361,9 @@ async function stepRegister(config, models, gpu) {
   }
   console.log('');
 
-  const confirm = await prompt(`${c.bold}Enregistrer ce GPU sur la plateforme ? (Y/n) : ${c.reset}`);
+  const confirm = await prompt(`${c.bold}Register this GPU on the platform? (Y/n): ${c.reset}`);
   if (confirm.toLowerCase() === 'n') {
-    log.warn('Abandonne — config sauvegardee localement');
+    log.warn('Aborted — config saved locally');
     saveConfig(config);
     return null;
   }
@@ -388,19 +389,19 @@ async function stepRegister(config, models, gpu) {
         gpuModel: gpu.model,
         vramGb: gpu.vramGb,
         availableModels: cleanModels,
-        ratePerHourUsd: cleanModels[0]?.rateUsdPerHour || 0.40,
+        ratePerHourUsd: cleanModels[0]?.rateUsdPerHour || 0.40,  // reference rate (first one)
         payoutPreference: config.payoutPreference || 'XCH',
-        tunnelUrl: null,
+        tunnelUrl: null,  // updated on first launch
       },
       { headers: { Authorization: `Bearer ${config.authToken}` } },
     );
-    log.ok(`Enregistre ! GPU ID = ${c.cyan}${data.gpu.id}${c.reset}`);
+    log.ok(`Registered! GPU ID = ${c.cyan}${data.gpu.id}${c.reset}`);
     config.gpuId = data.gpu.id;
     saveConfig(config);
     return data.gpu.id;
   } catch (err) {
-    log.err(`Register : ${err.response?.data?.error || err.message}`);
-    log.info('Config sauvegardee, tu peux retenter avec npm run wizard');
+    log.err(`Register: ${err.response?.data?.error || err.message}`);
+    log.info('Config saved, you can retry with npm run wizard');
     saveConfig(config);
     return null;
   }
@@ -420,13 +421,13 @@ async function main() {
   config.localLlamaPort = env.port || config.localLlamaPort || 8080;
 
   log.title('Payout');
-  const payout = await prompt(`Devise reception (XCH/BYC) [${config.payoutPreference || 'XCH'}] : `);
+  const payout = await prompt(`Payout currency (XCH/BYC) [${config.payoutPreference || 'XCH'}]: `);
   if (payout) config.payoutPreference = payout.toUpperCase();
   else config.payoutPreference = config.payoutPreference || 'XCH';
 
   const models = await stepModels(config.models || []);
   if (models.length === 0) {
-    log.err('Au moins 1 modele requis');
+    log.err('At least 1 model required');
     process.exit(1);
   }
   config.models = models;
@@ -440,16 +441,35 @@ async function main() {
   config.models = benchedModels.map(({ _bench, ...rest }) => rest);
   saveConfig(config);
 
-  await stepRegister(config, benchedModels, gpu);
+  const gpuId = await stepRegister(config, benchedModels, gpu);
 
-  log.title('Termine');
-  log.ok(`Config : ${configPath}`);
-  log.info('Lance maintenant : npm start');
+  if (gpuId) {
+    log.title('8. Serving mode');
+    await runPoolSetupStep({
+      config,
+      models: config.models,
+      gpuId,
+      authToken: config.authToken,
+      platformUrl: config.platformUrl,
+      ask: prompt,
+      log,
+    });
+    saveConfig(config);
+  }
+
+  log.title('Done');
+  log.ok(`Config saved: ${configPath}`);
+  if (config.poolMembership) {
+    log.ok(`Pool #${config.poolMembership.poolNumber} — SHA256 verified`);
+  } else {
+    log.info('Solo mode — GPU listed in public catalog');
+  }
+  log.info('Start the agent: npm start');
   rl.close();
 }
 
 main().catch(err => {
-  console.error(`\n${c.red}Erreur fatale :${c.reset}`, err.response?.data || err.message);
+  console.error(`\n${c.red}Fatal error:${c.reset}`, err.response?.data || err.message);
   rl.close();
   process.exit(1);
 });

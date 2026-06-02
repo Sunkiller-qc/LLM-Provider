@@ -3,6 +3,9 @@
   "authToken": "PASTE_JWT_FROM_https://llm.chia-offer.com/provider/setup",
   "llamaCppPath": "/usr/local/bin/llama-server",
   "localLlamaPort": 8080,
+  "servingMode": "solo",
+  "poolMembership": null,
+  "tunnelProvider": "cloudflare",
   "models": [
     {
       "name": "Qwen3-9B-Q4",

@@ -1,8 +1,8 @@
-// provider-agent/src/tunnel.js
-// Démarrage optionnel d'un Cloudflare Tunnel pour exposer llama.cpp.
-// Le tunnel n'est PAS requis : le routing client<->agent passe par le WS
-// que l'agent ouvre vers le backend. On garde le tunnel comme outil de
-// debug (pouvoir tester llama directement via l'URL publique).
+// src/tunnel.js
+// Optional Cloudflare Tunnel startup to expose llama.cpp.
+// The tunnel is NOT required: client<->agent routing goes through the WS
+// that the agent opens to the backend. We keep the tunnel as a
+// debug tool (to test llama directly via the public URL).
 
 import { spawn, execSync } from 'child_process';
 
@@ -18,19 +18,19 @@ function isCloudflaredInstalled() {
 }
 
 /**
- * Demarre un Quick Tunnel cloudflared. Retourne l'URL publique
- * (https://*.trycloudflare.com) ou null si cloudflared n'est pas installe.
+ * Start a cloudflared Quick Tunnel. Returns the public URL
+ * (https://*.trycloudflare.com) or null if cloudflared is not installed.
  *
- * Ne throw JAMAIS — l'agent doit pouvoir tourner sans cloudflared.
+ * Never throws — the agent must be able to run without cloudflared.
  */
 export async function startTunnel(localPort) {
   if (!isCloudflaredInstalled()) {
-    console.log('   ℹ  cloudflared non installe — tunnel skip (l\'agent marche quand meme via WS)');
+    console.log('   ℹ  cloudflared not installed — tunnel skipped (agent still works via WS)');
     return null;
   }
 
   if (tunnelProcess) {
-    console.warn('   Tunnel deja actif — stopTunnel() d\'abord');
+    console.warn('   Tunnel already active — call stopTunnel() first');
     return null;
   }
 
@@ -61,7 +61,7 @@ export async function startTunnel(localPort) {
       if (!resolved) {
         resolved = true;
         clearTimeout(timer);
-        console.warn(`   ⚠ cloudflared erreur : ${err.message} (continue sans tunnel)`);
+        console.warn(`   ⚠ cloudflared error: ${err.message} (continuing without tunnel)`);
         resolve(null);
       }
     });
@@ -71,7 +71,7 @@ export async function startTunnel(localPort) {
       if (!resolved) {
         resolved = true;
         clearTimeout(timer);
-        console.warn(`   ⚠ cloudflared a quitte (code ${code}) — continue sans tunnel`);
+        console.warn(`   ⚠ cloudflared exited (code ${code}) — continuing without tunnel`);
         resolve(null);
       }
     });
@@ -80,7 +80,7 @@ export async function startTunnel(localPort) {
       if (!resolved) {
         resolved = true;
         try { proc.kill('SIGKILL'); } catch (_) {}
-        console.warn('   ⚠ Timeout tunnel (30s) — continue sans');
+        console.warn('   ⚠ Tunnel timeout (30s) — continuing without');
         resolve(null);
       }
     }, 30_000);

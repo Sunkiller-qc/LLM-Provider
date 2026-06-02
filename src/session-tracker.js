@@ -1,14 +1,65 @@
-// provider-agent/src/session-tracker.js
-// Proxy LLM + tracking d'usage par session via WebSocket avec la plateforme.
+// src/session-tracker.js
+// LLM proxy + per-session usage tracking via WebSocket with the platform.
 
 import WebSocket from 'ws';
 import axios from 'axios';
 import { buildWsUrl } from './auth.js';
-import { ensureModelLoaded, getCurrentModel, getCurrentPort, stopLlamaServer } from './llama-manager.js';
+import { ensureModelLoaded, getCurrentModel, getCurrentPort, stopLlamaServer, setOnLlamaCrash } from './llama-manager.js';
+import { resolveModelForPoolSession } from './pool-setup.js';
 
-// Timer d'unload — partage module-level pour qu'une nouvelle session-start
-// puisse annuler l'unload programme par la session-end precedente.
+// Unload timer — module-level shared so a new session-start
+// can cancel the unload scheduled by the previous session-end.
 let idleUnloadTimer = null;
+
+// Capacity tracking: how many LLM requests are running in parallel right now.
+// The backend uses this to intelligently route new requests to
+// the least busy member of a pool.
+let concurrentRequests = 0;
+const recentDurations = [];      // last 10 durations in ms (moving average)
+const recentRequestsStarted = []; // for throughput stats
+
+function avgRecentDurationMs() {
+  if (recentDurations.length === 0) return null;
+  return Math.round(recentDurations.reduce((a, b) => a + b, 0) / recentDurations.length);
+}
+
+// Best-effort detection of the real n_ctx loaded by llama-server. Different
+// llama.cpp versions expose it under different keys; we try them all.
+export async function fetchLlamaCtx(port) {
+  try {
+    const r = await axios.get(`http://127.0.0.1:${port}/props`, { timeout: 5000 });
+    const d = r.data || {};
+    const candidates = [
+      d.default_generation_settings?.n_ctx,
+      d.default_generation_settings?.params?.n_ctx,
+      d.default_generation_settings?.n_ctx_per_seq,
+      d.n_ctx_per_seq,
+      d.n_ctx,
+      d.props?.n_ctx,
+      d.params?.n_ctx,
+      d.model?.n_ctx,
+      d.context_size,
+    ];
+    for (const v of candidates) {
+      if (typeof v === 'number' && v > 0) return v;
+    }
+  } catch (_) {}
+  return null;
+}
+
+function sendCapacityStatus(safeSend, config) {
+  const maxConcurrent = parseInt(config?.maxConcurrent, 10) || 1;
+  const free = Math.max(0, maxConcurrent - concurrentRequests);
+  const avgMs = avgRecentDurationMs();
+  safeSend({
+    type: 'capacity-status',
+    concurrentRequests,
+    maxConcurrent,
+    freeSlots: free,
+    avgRequestMs: avgMs,
+    ts: Date.now(),
+  });
+}
 
 function cancelIdleUnload() {
   if (idleUnloadTimer) {
@@ -20,16 +71,16 @@ function cancelIdleUnload() {
 function scheduleIdleUnload(config) {
   cancelIdleUnload();
   const seconds = Number(config?.idleUnloadSeconds);
-  // 0 ou negatif = on garde le modele en VRAM indefiniment (ancien comportement)
+  // 0 or negative = keep model in VRAM indefinitely (legacy behavior)
   if (!Number.isFinite(seconds) || seconds <= 0) return;
-  console.log(`   💤 Aucune session active — unload de llama-server dans ${seconds}s pour liberer la VRAM`);
+  console.log(`   💤 No active session — unloading llama-server in ${seconds}s to free VRAM`);
   idleUnloadTimer = setTimeout(async () => {
     idleUnloadTimer = null;
     try {
       await stopLlamaServer();
-      console.log(`   🧹 llama-server unload — VRAM liberee`);
+      console.log(`   🧹 llama-server unloaded — VRAM freed`);
     } catch (err) {
-      console.error(`   ⚠️  Erreur unload llama-server : ${err.message}`);
+      console.error(`   ⚠️  llama-server unload error: ${err.message}`);
     }
   }, seconds * 1000);
 }
@@ -51,14 +102,37 @@ export function startSessionProxy({ gpuId, config }) {
     }
   }
 
+  // When llama-server dies unexpectedly (OOM, segfault, killed externally),
+  // tell the backend so the in-flight sessions can be cleanly errored out
+  // instead of hanging until the WS heartbeat catches up.
+  setOnLlamaCrash(({ modelName, exitCode }) => {
+    console.error(`   ❌ llama-server crashed (model=${modelName}, exitCode=${exitCode})`);
+    const affected = Array.from(sessions.keys());
+    safeSend({ type: 'model-crashed', modelName, exitCode, affectedSessionIds: affected });
+    for (const sid of affected) {
+      safeSend({
+        type: 'session-error',
+        sessionId: sid,
+        error: `llama-server crashed (exit ${exitCode}) — likely out-of-memory or external kill`,
+        code: 'model-crashed',
+      });
+      sessions.delete(sid);
+    }
+    concurrentRequests = 0;
+    sendCapacityStatus(safeSend, config);
+  });
+
   function connect() {
     const wsUrl = buildWsUrl(config, gpuId);
     ws = new WebSocket(wsUrl);
 
     ws.on('open', () => {
-      console.log(`   ✅ WS plateforme connecte (gpu ${gpuId})`);
+      console.log(`   ✅ Platform WS connected (gpu ${gpuId})`);
       reconnectDelay = RECONNECT_BASE_MS;
-      heartbeatTimer = setInterval(() => safeSend({ type: 'heartbeat', ts: Date.now() }), 30_000);
+      heartbeatTimer = setInterval(() => {
+        safeSend({ type: 'heartbeat', ts: Date.now() });
+        sendCapacityStatus(safeSend, config);
+      }, 10_000);
     });
 
     ws.on('message', async (data) => {
@@ -69,8 +143,12 @@ export function startSessionProxy({ gpuId, config }) {
       if (msg.type === 'hello') return;
 
       if (msg.type === 'session-start') {
-        const modelName = msg.payload?.modelName;
-        // Une session redemarre : annule l'unload programme (si y'en a un)
+        const requestedName = msg.payload?.modelName;
+        const modelName = resolveModelForPoolSession(config, requestedName);
+        if (modelName !== requestedName) {
+          console.log(`   🔀 Pool session: loading local model "${modelName}" (SHA256 match, not "${requestedName}")`);
+        }
+        // A session is starting: cancel any scheduled unload
         cancelIdleUnload();
         sessions.set(msg.sessionId, {
           modelName,
@@ -83,28 +161,36 @@ export function startSessionProxy({ gpuId, config }) {
         const alreadyLoaded = getCurrentModel() === modelName;
         if (!alreadyLoaded) {
           safeSend({ type: 'session-loading', sessionId: msg.sessionId, modelName });
-          console.log(`   ⏳ Session ${msg.sessionId} : chargement ${modelName}...`);
+          console.log(`   ⏳ Session ${msg.sessionId}: loading ${modelName}...`);
         }
 
         try {
           const { swapped } = await ensureModelLoaded(config, modelName);
           const s = sessions.get(msg.sessionId);
           if (s) s.ready = true;
+          // Report the real n_ctx llama-server is running with so the catalog
+          // reflects what's actually loaded, not what's in config.json.
+          try {
+            const actualCtx = await fetchLlamaCtx(getCurrentPort() || config.localLlamaPort);
+            if (actualCtx) {
+              safeSend({ type: 'model-info', modelName, actualCtx });
+            }
+          } catch (_) {}
           safeSend({
             type: 'session-ready',
             sessionId: msg.sessionId,
             modelName,
             coldStart: swapped,
           });
-          console.log(`   ▶️  Session ${msg.sessionId} prete (${modelName}${swapped ? ', cold' : ', warm'})`);
+          console.log(`   ▶️  Session ${msg.sessionId} ready (${modelName}${swapped ? ', cold' : ', warm'})`);
         } catch (err) {
           sessions.delete(msg.sessionId);
           safeSend({
             type: 'session-error',
             sessionId: msg.sessionId,
-            error: `Chargement modele : ${err.message}`,
+            error: `Model load: ${err.message}`,
           });
-          console.error(`   ❌ Session ${msg.sessionId} : ${err.message}`);
+          console.error(`   ❌ Session ${msg.sessionId}: ${err.message}`);
         }
         return;
       }
@@ -112,9 +198,15 @@ export function startSessionProxy({ gpuId, config }) {
       if (msg.type === 'llm-request') {
         const s = sessions.get(msg.sessionId);
         if (!s || !s.ready) {
-          safeSend({ type: 'llm-error', sessionId: msg.sessionId, error: 'session pas prete' });
+          safeSend({ type: 'llm-error', sessionId: msg.sessionId, error: 'session not ready' });
           return;
         }
+        // Track concurrent in-flight requests so the backend can route smartly.
+        concurrentRequests += 1;
+        recentRequestsStarted.push(Date.now());
+        sendCapacityStatus(safeSend, config);
+        let durationMs = 0;
+        const reqStartedAt = Date.now();
         try {
           const response = await axios.post(
             `http://127.0.0.1:${getCurrentPort() || config.localLlamaPort}/v1/chat/completions`,
@@ -126,25 +218,34 @@ export function startSessionProxy({ gpuId, config }) {
             safeSend({ type: 'llm-chunk', sessionId: msg.sessionId, data: chunk.toString() });
           });
           response.data.on('end', () => {
+            durationMs = Date.now() - reqStartedAt;
+            recentDurations.push(durationMs);
+            if (recentDurations.length > 10) recentDurations.shift();
+            concurrentRequests = Math.max(0, concurrentRequests - 1);
+            sendCapacityStatus(safeSend, config);
             safeSend({ type: 'llm-done', sessionId: msg.sessionId });
           });
           response.data.on('error', err => {
+            concurrentRequests = Math.max(0, concurrentRequests - 1);
+            sendCapacityStatus(safeSend, config);
             safeSend({ type: 'llm-error', sessionId: msg.sessionId, error: err.message });
           });
         } catch (err) {
+          concurrentRequests = Math.max(0, concurrentRequests - 1);
+          sendCapacityStatus(safeSend, config);
           safeSend({ type: 'llm-error', sessionId: msg.sessionId, error: err.message });
         }
         return;
       }
 
       if (msg.type === 'benchmark-start') {
-        const { modelName, prompt, maxTokens = 150 } = msg;
-        console.log(`   🧪 Benchmark demande pour : ${modelName}`);
+        const { modelName, prompt, maxTokens = 30 } = msg;
+        console.log(`   🧪 Benchmark requested for: ${modelName}`);
 
-        // Si benchmark deja fait au setup, on le re-utilise (gagne 1-2 min)
+        // If benchmark already done at setup, reuse it (saves 1-2 min)
         const localModel = (config.models || []).find(m => m.name === modelName);
         if (localModel?.benchmark?.passed) {
-          console.log(`   ♻️  Re-utilise benchmark du setup : ${localModel.benchmark.tokensPerSec} tok/s`);
+          console.log(`   ♻️  Reusing setup benchmark: ${localModel.benchmark.tokensPerSec} tok/s`);
           safeSend({
             type: 'benchmark-result',
             modelName,
@@ -169,9 +270,9 @@ export function startSessionProxy({ gpuId, config }) {
               max_tokens: maxTokens,
               temperature: 0,
               stream: false,
-              // Desactive le thinking au niveau du template (Qwen 3+) — sans
-              // ca le template injecte <think>...</think> et le modele brule
-              // tous ses tokens en reflexion avant de repondre.
+              // Disable thinking at template level (Qwen 3+) — without
+              // this the template injects <think>...</think> and the model burns
+              // all its tokens reasoning before responding.
               chat_template_kwargs: { enable_thinking: false },
             },
             { timeout: 90_000 },
@@ -181,23 +282,9 @@ export function startSessionProxy({ gpuId, config }) {
           const text = [msg.reasoning_content, msg.content].filter(Boolean).join(' ');
           const totalTokens = res.data?.usage?.completion_tokens || text.split(/\s+/).length;
           const inferenceMs = tDone - tLoaded;
-          // Use llama-server's internal timing when available — it measures pure
-          // generation speed and is unaffected by TTFT or token count.
-          const tokensPerSec = res.data?.timings?.predicted_per_second
-            ?? (totalTokens / (inferenceMs / 1000));
+          const tokensPerSec = totalTokens / (inferenceMs / 1000);
 
-          // Recupere le n_ctx reellement charge par llama-server (peut differer
-          // de la valeur configuree si le modele a un n_ctx_train plus petit).
-          let actualCtx = null;
-          try {
-            const port = getCurrentPort() || config.localLlamaPort;
-            const props = await axios.get(`http://127.0.0.1:${port}/props`, { timeout: 5000 });
-            const d = props.data || {};
-            actualCtx = d.default_generation_settings?.n_ctx
-              ?? d.n_ctx_per_seq
-              ?? d.default_generation_settings?.params?.n_ctx
-              ?? null;
-          } catch (_) { /* /props peut ne pas etre dispo selon la version */ }
+          const actualCtx = await fetchLlamaCtx(getCurrentPort() || config.localLlamaPort);
 
           safeSend({
             type: 'benchmark-result',
@@ -209,10 +296,10 @@ export function startSessionProxy({ gpuId, config }) {
             response: text,
             actualCtx,
           });
-          console.log(`   ✅ Benchmark OK : ${tokensPerSec.toFixed(1)} tok/s, ${inferenceMs}ms`);
+          console.log(`   ✅ Benchmark OK: ${tokensPerSec.toFixed(1)} tok/s, ${inferenceMs}ms`);
         } catch (err) {
           safeSend({ type: 'benchmark-error', modelName, error: err.message });
-          console.error(`   ❌ Benchmark KO : ${err.message}`);
+          console.error(`   ❌ Benchmark failed: ${err.message}`);
         }
         return;
       }
@@ -221,12 +308,12 @@ export function startSessionProxy({ gpuId, config }) {
         const s = sessions.get(msg.sessionId);
         if (s) {
           const durationSec = Math.floor((Date.now() - s.startedAt) / 1000);
-          console.log(`   ⏹  Session ${msg.sessionId} terminee (${durationSec}s)`);
+          console.log(`   ⏹  Session ${msg.sessionId} ended (${durationSec}s)`);
           sessions.delete(msg.sessionId);
         }
-        // Plus aucune session : programme un unload de llama-server pour
-        // liberer la VRAM. Annule par toute nouvelle session-start qui arrive
-        // dans la fenetre. Defaut : 5 minutes (config.idleUnloadSeconds).
+        // No sessions left: schedule llama-server unload to
+        // free VRAM. Cancelled by any new session-start that arrives
+        // within the window. Default: 5 minutes (config.idleUnloadSeconds).
         if (sessions.size === 0) {
           scheduleIdleUnload(config);
         }
@@ -239,10 +326,10 @@ export function startSessionProxy({ gpuId, config }) {
       if (stopped) return;
 
       const reasonStr = reason?.toString() || '';
-      console.log(`   ⚠️  WS ferme (${code} ${reasonStr}), reconnexion dans ${reconnectDelay}ms`);
+      console.log(`   ⚠️  WS closed (${code} ${reasonStr}), reconnecting in ${reconnectDelay}ms`);
 
       if (code === 1008) {
-        console.error('   ❌ Auth WS refusee — verifie authToken et que le GPU est bien enregistre');
+        console.error('   ❌ WS auth rejected — verify authToken and that the GPU is registered');
         return;
       }
 
@@ -251,7 +338,7 @@ export function startSessionProxy({ gpuId, config }) {
     });
 
     ws.on('error', (err) => {
-      console.error('   WS erreur:', err.message);
+      console.error('   WS error:', err.message);
     });
   }
 

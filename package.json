@@ -1,7 +1,7 @@
 {
   "name": "gpu-rental-provider-agent",
   "version": "0.1.0",
-  "description": "Agent à installer sur la machine GPU pour la mettre en location sur Chia LLM Rental",
+  "description": "GPU provider agent for Chia LLM Rental",
   "type": "module",
   "bin": {
     "gpu-rental-agent": "./src/index.js"

@@ -1,7 +1,11 @@
-# Exclut les fichiers lourds ou sensibles du contexte de build Docker
+# Exclude heavy or sensitive files from the Docker build context
 config.json
 models/
 *.gguf
 .git
 .gitignore
 node_modules/
+
+*.bat
+QUICKSTART.md
+README.md

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// provider-agent/src/mock.js
-// Faux agent : utilise le vrai WS + auth + register, mais simule llama.cpp
-// avec des reponses bidonnees. Permet de tester la plateforme end-to-end
-// sans avoir besoin d'un GPU ni de llama.cpp.
+// src/mock.js
+// Fake agent: uses real WS + auth + register, but simulates llama.cpp
+// with fake responses. Lets you test the platform end-to-end
+// without needing a GPU or llama.cpp.
 //
-// Usage : npm run mock
+// Usage: npm run mock
 
 import 'dotenv/config';
 import fs from 'fs';
@@ -19,7 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
 
 if (!fs.existsSync(configPath)) {
-  console.error('config.json manquant. Run npm run setup d\'abord.');
+  console.error('config.json missing. Run npm run setup first.');
   process.exit(1);
 }
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -38,8 +38,8 @@ let currentModelLoaded = null;
 
 async function fakeLoad(modelName) {
   if (currentModelLoaded === modelName) return { swapped: false };
-  console.log(`   [MOCK] chargement de ${modelName}...`);
-  await new Promise(r => setTimeout(r, 1500));  // simule 1.5s de cold-start
+  console.log(`   [MOCK] loading ${modelName}...`);
+  await new Promise(r => setTimeout(r, 1500));  // simulate 1.5s cold-start
   currentModelLoaded = modelName;
   return { swapped: true };
 }
@@ -48,11 +48,11 @@ async function main() {
   console.log('==========================================');
   console.log('  MOCK Provider Agent');
   console.log('==========================================');
-  console.log('  Aucun GPU/llama.cpp requis.');
+  console.log('  No GPU/llama.cpp required.');
   console.log('');
 
   const { client, jwtPayload } = createAuthClient(config);
-  console.log(`Auth OK : ${jwtPayload?.walletAddress}`);
+  console.log(`Auth OK: ${jwtPayload?.walletAddress}`);
 
   console.log('Register...');
   const { data: registration } = await client.post('/api/gpus/register', {
@@ -64,7 +64,7 @@ async function main() {
     tunnelUrl: 'http://mock.local:8080',
   });
   const gpuId = registration.gpu.id;
-  console.log(`Enregistre : GPU ID = ${gpuId}`);
+  console.log(`Registered: GPU ID = ${gpuId}`);
 
   const wsUrl = buildWsUrl(config, gpuId);
   const ws = new WebSocket(wsUrl);
@@ -75,7 +75,7 @@ async function main() {
   }
 
   ws.on('open', () => {
-    console.log('WS connecte');
+    console.log('WS connected');
     setInterval(() => send({ type: 'heartbeat', ts: Date.now() }), 30_000);
   });
 
@@ -86,13 +86,13 @@ async function main() {
     if (msg.type === 'hello') return;
 
     if (msg.type === 'benchmark-start') {
-      console.log(`[MOCK] benchmark-start pour ${msg.modelName}`);
+      console.log(`[MOCK] benchmark-start for ${msg.modelName}`);
       const t0 = Date.now();
       await fakeLoad(msg.modelName);
       const tLoaded = Date.now();
-      await new Promise(r => setTimeout(r, 300));  // simule 300ms d'inference
+      await new Promise(r => setTimeout(r, 300));  // simulate 300ms inference
       const tDone = Date.now();
-      // On renvoie une reponse qui CONTIENT bien "GPU rental test ok" pour passer la validation
+      // Return a response that CONTAINS "GPU rental test ok" to pass validation
       send({
         type: 'benchmark-result',
         modelName: msg.modelName,
@@ -102,12 +102,12 @@ async function main() {
         tokensPerSec: 26.7,
         response: 'GPU rental test ok',
       });
-      console.log('[MOCK] benchmark-result envoye');
+      console.log('[MOCK] benchmark-result sent');
       return;
     }
 
     if (msg.type === 'session-start') {
-      console.log(`[MOCK] session-start ${msg.sessionId}, modele ${msg.payload?.modelName}`);
+      console.log(`[MOCK] session-start ${msg.sessionId}, model ${msg.payload?.modelName}`);
       sessions.set(msg.sessionId, { modelName: msg.payload?.modelName });
       const swap = currentModelLoaded !== msg.payload?.modelName;
       if (swap) {
@@ -125,8 +125,8 @@ async function main() {
 
     if (msg.type === 'llm-request') {
       console.log(`[MOCK] llm-request session ${msg.sessionId}`);
-      // Stream une reponse OpenAI SSE en 5 chunks
-      const fakeReply = `Mock reply for "${msg.payload?.messages?.slice(-1)[0]?.content?.slice(0, 30) || ''}". Pas un vrai LLM.`;
+      // Stream a fake OpenAI SSE response in 5 chunks
+      const fakeReply = `Mock reply for "${msg.payload?.messages?.slice(-1)[0]?.content?.slice(0, 30) || ''}". Not a real LLM.`;
       const words = fakeReply.split(' ');
       for (let i = 0; i < words.length; i++) {
         const chunk = {
@@ -150,17 +150,17 @@ async function main() {
   });
 
   ws.on('close', (code) => {
-    console.log(`WS ferme (${code})`);
+    console.log(`WS closed (${code})`);
     if (code !== 1008) {
       setTimeout(() => main().catch(console.error), 3000);
     }
   });
   ws.on('error', err => console.error('WS err:', err.message));
 
-  console.log('Mock agent pret. Ctrl-C pour stopper.');
+  console.log('Mock agent ready. Ctrl-C to stop.');
 }
 
 main().catch(err => {
-  console.error('Erreur fatale :', err.response?.data || err.message);
+  console.error('Fatal error:', err.response?.data || err.message);
   process.exit(1);
 });

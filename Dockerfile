@@ -1,4 +1,4 @@
-# ── Étape 1 : build llama.cpp avec support CUDA ──────────────────────────────
+# ── Step 1: build llama.cpp with CUDA ───────────────────────────────────────
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS llama-builder
 
 ARG CUDA_ARCHITECTURES="75;80;86;89;90"
@@ -19,7 +19,7 @@ RUN cmake -S /llama.cpp -B /llama.cpp/build \
     -DCUBLASLT=ON \
     && cmake --build /llama.cpp/build --target llama-server -j$(nproc)
 
-# ── Étape 2 : image finale ────────────────────────────────────────────────────
+# ── Step 2: final image ─────────────────────────────────────────────────────
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 RUN apt-get update && apt-get install -y curl libgomp1 && \
@@ -29,16 +29,16 @@ RUN apt-get update && apt-get install -y curl libgomp1 && \
 
 WORKDIR /app
 
-# Dépendances Node
-COPY package.json ./
-RUN npm install --omit=dev
+# Node dependencies
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
-# Code source de l'agent
+# Agent source
 COPY src/ ./src/
 
-# Binaire llama-server compilé dans l'étape précédente
+# llama-server binary from the build stage
 COPY --from=llama-builder /llama.cpp/build/bin/llama-server /usr/local/bin/llama-server
 
-# config.json et models/ sont montés en volume au runtime (voir docker-compose.yml)
+# config.json and models/ are mounted at runtime (see docker-compose.yml)
 
 CMD ["node", "src/index.js"]
