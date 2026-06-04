@@ -381,6 +381,111 @@ export async function runPoolJoinFlow({
   return 'pool';
 }
 
+/**
+ * Non-interactive pool join driven by env vars (POOL_NUMBER + MODEL_GGUF).
+ * Used by the Docker entrypoint so users can join a pool without running the
+ * CLI wizard. Hashes the GGUF with periodic progress logs, verifies SHA256
+ * matches the pool, then calls /api/pools/join. Mutates config in memory.
+ */
+export async function joinPoolFromEnv({
+  config, gpuId, authToken, platformUrl, poolNumber, ggufPath, log = console,
+}) {
+  if (!fs.existsSync(ggufPath)) {
+    throw new Error(`MODEL_GGUF file not found: ${ggufPath}`);
+  }
+
+  const poolNum = parseInt(poolNumber, 10);
+  if (!Number.isFinite(poolNum) || poolNum < 1) {
+    throw new Error(`POOL_NUMBER invalid: ${poolNumber}`);
+  }
+
+  log.log?.(`   🏊 Pool mode via env: #${poolNum} · ${ggufPath}`);
+
+  const model = (config.models || []).find((m) => {
+    if (m.path === ggufPath || m.ggufPath === ggufPath) return true;
+    if (m.scriptPath) {
+      const parsed = parseGgufPathFromScript(m.scriptPath);
+      if (parsed === ggufPath) return true;
+    }
+    return false;
+  });
+  if (!model) {
+    throw new Error(
+      `MODEL_GGUF=${ggufPath} doesn't match any entry in config.models[]. `
+      + `Add a model with "path": "${ggufPath}" to config.json first.`,
+    );
+  }
+
+  let pool;
+  try {
+    pool = await fetchPoolByNumber(platformUrl, poolNum);
+  } catch (err) {
+    throw new Error(`Pool lookup failed: ${err.response?.data?.error || err.message}`);
+  }
+  if (!pool) throw new Error(`Pool #${poolNum} not found`);
+  if (!pool.isOpen) throw new Error(`Pool #${poolNum} is closed to new members`);
+
+  log.log?.(`   Pool: ${pool.displayName} · $${pool.ratePerHourUsd}/h · ctx ${pool.ctx}`);
+  log.log?.(`   Required SHA256: ${pool.modelSha256}`);
+  log.log?.(`   Hashing ${ggufPath} (1-2 min on large files)…`);
+
+  const startTs = Date.now();
+  let lastPct = -5;
+  let lastTs = startTs;
+  const localHash = await sha256File(ggufPath, (done, total) => {
+    if (!total) return;
+    const pct = Math.floor((done / total) * 100);
+    const now = Date.now();
+    if (pct >= lastPct + 5 || now - lastTs >= 10_000) {
+      const elapsed = Math.round((now - startTs) / 1000);
+      log.log?.(`   ... ${pct}% (${formatBytes(done)} / ${formatBytes(total)}) — ${elapsed}s`);
+      lastPct = pct;
+      lastTs = now;
+    }
+  });
+  const totalSec = ((Date.now() - startTs) / 1000).toFixed(1);
+  log.log?.(`   Hash done in ${totalSec}s: ${localHash}`);
+
+  if (localHash !== pool.modelSha256.toLowerCase()) {
+    throw new Error(
+      `SHA256 mismatch — local GGUF doesn't match pool #${poolNum}.\n`
+      + `  Expected: ${pool.modelSha256}\n`
+      + `  Got:      ${localHash}\n`
+      + `  Check MODEL_GGUF points to the exact same file as the pool.`,
+    );
+  }
+  log.log?.(`   ✅ SHA256 matches pool`);
+
+  try {
+    await joinPoolByNumber({
+      platformUrl, authToken, gpuId, poolNumber: poolNum, modelSha256: localHash,
+    });
+    log.log?.(`   ✅ Joined pool #${poolNum}`);
+  } catch (err) {
+    if (err.response?.status === 409) {
+      log.log?.(`   ✅ Already member of pool #${poolNum}`);
+    } else {
+      throw new Error(`Pool join API failed: ${err.response?.data?.error || err.message}`);
+    }
+  }
+
+  model.sha256 = localHash;
+  model.rateUsdPerHour = pool.ratePerHourUsd;
+  if (!model.path) model.path = ggufPath;
+  model.ggufPath = ggufPath;
+
+  config.servingMode = 'pool';
+  config.poolMembership = {
+    poolNumber: pool.poolNumber,
+    poolId: pool.id,
+    requiredSha256: pool.modelSha256.toLowerCase(),
+    localModelName: model.name,
+    ggufPath,
+    joinedAt: new Date().toISOString(),
+    source: 'env',
+  };
+}
+
 /** Re-verify SHA256 and refresh pool membership every agent start. */
 export async function verifyPoolMembershipOnStart({ config, client, gpuId, configPath, log = console }) {
   const pm = config.poolMembership;

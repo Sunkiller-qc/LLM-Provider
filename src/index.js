@@ -11,7 +11,7 @@ import { stopLlamaServer } from './llama-manager.js';
 import { startTunnel, stopTunnel } from './tunnel.js';
 import { startSessionProxy } from './session-tracker.js';
 import { createAuthClient } from './auth.js';
-import { verifyPoolMembershipOnStart } from './pool-setup.js';
+import { verifyPoolMembershipOnStart, joinPoolFromEnv } from './pool-setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -170,7 +170,27 @@ async function main() {
 
   registeredGpuId = gpuId;
 
-  if (config.poolMembership?.poolNumber) {
+  const envPoolNumber = process.env.POOL_NUMBER;
+  const envModelGguf = process.env.MODEL_GGUF;
+  if (envPoolNumber || envModelGguf) {
+    if (!envPoolNumber || !envModelGguf) {
+      console.error('❌ POOL_NUMBER et MODEL_GGUF doivent etre definis ensemble');
+      process.exit(1);
+    }
+    try {
+      await joinPoolFromEnv({
+        config,
+        gpuId,
+        authToken: config.authToken,
+        platformUrl: config.platformUrl,
+        poolNumber: envPoolNumber,
+        ggufPath: envModelGguf,
+      });
+    } catch (err) {
+      console.error(`❌ Pool join (env) failed: ${err.message}`);
+      process.exit(1);
+    }
+  } else if (config.poolMembership?.poolNumber) {
     try {
       await verifyPoolMembershipOnStart({ config, client, gpuId, configPath });
     } catch (err) {
