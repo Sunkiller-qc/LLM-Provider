@@ -37,6 +37,18 @@ docker compose up -d
 docker compose logs -f
 ```
 
+### Join a pool (Docker)
+
+To run as a pool member, uncomment these two vars in `docker-compose.yml`:
+
+```yaml
+environment:
+  - POOL_NUMBER=10001
+  - MODEL_GGUF=/app/models/qwen3.gguf
+```
+
+At startup the agent hashes `MODEL_GGUF`, verifies SHA256 matches the pool, then joins via API. Progress is streamed to `docker compose logs -f` (no CLI prompt needed). The matching entry must already exist in `config.models[]` with the same path.
+
 ---
 
 ## Deploy without Docker (bare metal)
