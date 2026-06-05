@@ -12,3 +12,13 @@ export function normalizePlatformUrl(url) {
 export function isLocalPlatformUrl(url) {
   return /localhost|127\.0\.0\.1/i.test(String(url || ''));
 }
+
+/** Normalise platformUrl et remplace localhost par la prod chia-offer.com. */
+export function resolvePlatformUrl(url, { warn } = {}) {
+  const normalized = normalizePlatformUrl(url);
+  if (isLocalPlatformUrl(normalized)) {
+    warn?.(`platformUrl local (${normalized}) — bascule sur ${DEFAULT_PLATFORM_URL}`);
+    return DEFAULT_PLATFORM_URL;
+  }
+  return normalized;
+}

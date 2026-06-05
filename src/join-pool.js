@@ -6,6 +6,7 @@ import path from 'path';
 import readline from 'readline';
 import { fileURLToPath } from 'url';
 import { runPoolJoinFlow } from './pool-setup.js';
+import { resolvePlatformUrl } from './defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -28,6 +29,9 @@ async function main() {
   }
 
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  config.platformUrl = resolvePlatformUrl(config.platformUrl, {
+    warn: (msg) => log.warn(msg),
+  });
 
   if (!config.authToken) {
     console.error('authToken manquant dans config.json');

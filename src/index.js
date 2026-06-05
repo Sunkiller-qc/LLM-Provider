@@ -12,6 +12,7 @@ import { startTunnel, stopTunnel } from './tunnel.js';
 import { startSessionProxy } from './session-tracker.js';
 import { createAuthClient } from './auth.js';
 import { verifyPoolMembershipOnStart, joinPoolFromEnv } from './pool-setup.js';
+import { resolvePlatformUrl } from './defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -22,6 +23,9 @@ if (!fs.existsSync(configPath)) {
 }
 
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+config.platformUrl = resolvePlatformUrl(config.platformUrl, {
+  warn: (msg) => console.warn(`   ⚠️  ${msg}`),
+});
 
 let proxyHandle = null;
 let heartbeatTimer = null;
@@ -59,6 +63,7 @@ process.on('SIGTERM', () => cleanup(0));
 
 async function main() {
   console.log('🖥  GPU Rental Provider Agent — demarrage');
+  console.log(`   Backend : ${config.platformUrl}`);
 
   const { client, jwtPayload } = createAuthClient(config);
   authClient = client;
