@@ -111,7 +111,7 @@ function startViaBinary(config, model) {
 
   // Internal config keys that are not llama-server CLI flags.
   const skip = new Set([
-    'name', 'path', 'scriptPath', 'port', 'rateUsdPerHour',
+    'name', 'path', 'ggufPath', 'scriptPath', 'port', 'rateUsdPerHour',
     'benchmark', 'sha256', 'displayName',
   ]);
 
