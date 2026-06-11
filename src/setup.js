@@ -41,11 +41,12 @@ async function main() {
 
   const config = loadConfig();
 
-  const { DEFAULT_PLATFORM_URL, normalizePlatformUrl } = await import('./defaults.js');
-  const platformUrl = normalizePlatformUrl(
+  const { DEFAULT_PLATFORM_URL, resolvePlatformUrl } = await import('./defaults.js');
+  const platformUrl = resolvePlatformUrl(
     (await prompt(`URL du backend API [${config.platformUrl || DEFAULT_PLATFORM_URL}] : `))
     || config.platformUrl
     || DEFAULT_PLATFORM_URL,
+    { warn: (msg) => console.warn(`   ⚠️  ${msg}`) },
   );
   config.platformUrl = platformUrl;
 

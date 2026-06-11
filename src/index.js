@@ -70,6 +70,17 @@ async function main() {
   console.log(`   Auth OK — wallet ${jwtPayload?.walletAddress || '(inconnu)'}`);
 
   const gpuInfo = await detectGpu();
+  // Override manuel possible via config.json (utile si nvidia-smi ne remonte
+  // pas la VRAM, ex. GB10 / memoire unifiee).
+  if (config.gpuModel) gpuInfo.model = config.gpuModel;
+  if (Number.isFinite(Number(config.vramGb)) && Number(config.vramGb) > 0) {
+    gpuInfo.vramGb = Math.floor(Number(config.vramGb));
+  }
+  if (!Number.isFinite(gpuInfo.vramGb) || gpuInfo.vramGb <= 0) {
+    throw new Error(
+      `VRAM indetectable pour ${gpuInfo.model}. Ajoute "vramGb": <Go> dans config.json (ex. 128 pour un GB10).`
+    );
+  }
   console.log(`   GPU detecte: ${gpuInfo.model} (${gpuInfo.vramGb} Go VRAM)`);
 
   if (!Array.isArray(config.models) || config.models.length === 0) {

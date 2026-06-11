@@ -23,7 +23,7 @@ import {
 import { ensureModelLoaded, stopLlamaServer } from './llama-manager.js';
 import { printRateHints } from './pricing.js';
 import { askServingModeEarly, isPoolMode, finalizePoolJoin, runPoolJoinFlow } from './pool-setup.js';
-import { DEFAULT_PLATFORM_URL, DEFAULT_FRONTEND_URL, normalizePlatformUrl } from './defaults.js';
+import { DEFAULT_PLATFORM_URL, DEFAULT_FRONTEND_URL, resolvePlatformUrl } from './defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -244,10 +244,11 @@ async function stepModelsManual(existingModels, { poolMode, poolRate }) {
 async function stepAuth(config) {
   log.title('5. Authentification wallet Chia');
 
-  const platformUrl = normalizePlatformUrl(
+  const platformUrl = resolvePlatformUrl(
     (await prompt(`Backend API URL [${config.platformUrl || DEFAULT_PLATFORM_URL}] : `))
     || config.platformUrl
     || DEFAULT_PLATFORM_URL,
+    { warn: (msg) => log.warn?.(msg) },
   );
   config.platformUrl = platformUrl;
   log.info(`Frontend (Sage/JWT) : ${DEFAULT_FRONTEND_URL}`);

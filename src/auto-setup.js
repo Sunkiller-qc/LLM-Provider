@@ -19,7 +19,7 @@ import { detectAllGpus } from './gpu-monitor.js';
 import { detectLlamaServer, detectCloudflared, findFreePort, scanLaunchScripts } from './detect.js';
 import { ensureModelLoaded, stopLlamaServer, getCurrentPort } from './llama-manager.js';
 import { askServingModeEarly, isPoolMode, finalizePoolJoin, runPoolJoinFlow } from './pool-setup.js';
-import { DEFAULT_PLATFORM_URL, DEFAULT_FRONTEND_URL, normalizePlatformUrl, isLocalPlatformUrl } from './defaults.js';
+import { DEFAULT_PLATFORM_URL, DEFAULT_FRONTEND_URL, resolvePlatformUrl } from './defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const configPath = path.join(__dirname, '..', 'config.json');
@@ -441,13 +441,11 @@ async function main() {
   // === JWT ===
   title('6. Authentification (signe une fois dans Sage)');
 
-  if (isLocalPlatformUrl(config.platformUrl)) {
-    warn(`config.json utilise encore ${config.platformUrl}`);
-  }
-  const platformUrl = normalizePlatformUrl(
+  const platformUrl = resolvePlatformUrl(
     config.platformUrl
     || (await ask(`\n  URL du backend API [${DEFAULT_PLATFORM_URL}] : `))
     || DEFAULT_PLATFORM_URL,
+    { warn },
   );
   config.platformUrl = platformUrl;
 
