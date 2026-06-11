@@ -83,6 +83,8 @@ See `config.example.json` for all fields. Essentials:
 | `chiaWalletAddress` | `xch1…` address that receives payouts |
 | `payoutPreference` | `XCH` or `BYC` |
 | `idleUnloadSeconds` | Seconds before unloading the model from VRAM after idle (0 = never) |
+| `gpuModel` | *(optional)* Override the auto-detected GPU name |
+| `vramGb` | *(optional)* Override VRAM in GB — needed when `nvidia-smi` can't report it (e.g. NVIDIA GB10 / unified memory) |
 | `servingMode` | `solo` (direct rental) or pool via `poolMembership` |
 | `poolMembership` | `null` or `{ "poolNumber", "modelSha256", … }` to join a pool |
 
